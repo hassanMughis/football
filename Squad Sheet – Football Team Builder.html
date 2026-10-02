@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Squad Sheet – Football Team Builder</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<style>
+:root{--bg:#202124;--tab:#17181a;--s1:#26272b;--s2:#35363a;--line:#3c4043;--tx:#e8eaed;--mu:#9aa0a6;--red:#e8261d;--red2:#a3231d;--acc:#8ab4f8;--onacc:#202124;--gold:#fdd663;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#f1f3f4;--tab:#dfe1e5;--s1:#ffffff;--s2:#e8eaed;--line:#dadce0;--tx:#202124;--mu:#5f6368;--acc:#1a73e8;--onacc:#fff;--gold:#b06000}}
+:root[data-theme="light"]{--bg:#f1f3f4;--tab:#dfe1e5;--s1:#ffffff;--s2:#e8eaed;--line:#dadce0;--tx:#202124;--mu:#5f6368;--acc:#1a73e8;--onacc:#fff;--gold:#b06000}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:400 15px/1.4 Roboto,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.app{max-width:640px;margin:0 auto;min-height:100vh;background:var(--bg)}
+.tabs{display:flex;background:var(--tab)}
+.tabs button{flex:1;padding:15px 4px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--mu);font:500 13px Roboto,sans-serif;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+.tabs button.on{background:var(--s2);color:var(--tx);border-bottom-color:var(--tx)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
+button,input,select{font-family:inherit}
+.pad{padding:16px}
+.hd{background:var(--s1);padding:18px 16px 14px}
+.lg{display:flex;justify-content:space-between;font-size:14px;color:var(--mu)}.lg b{color:var(--tx);font-weight:500}
+.lg b.live{color:#f28b82}
+.sb{display:grid;grid-template-columns:1fr auto 1fr;align-items:start;gap:6px;margin-top:16px}
+.tm{text-align:center;min-width:0}.crest{width:46px;height:46px;border-radius:50%;margin:0 auto 8px;display:grid;place-items:center;font-weight:700;font-size:16px;color:#fff;background:#1e6b46}.tm:last-child .crest{background:#7a2e2e}
+.tn{font-weight:500;font-size:15px;overflow-wrap:anywhere}
+.sc{display:flex;gap:18px;align-items:center;font-size:clamp(36px,12vw,52px);font-weight:400;line-height:46px}.sc i{font-style:normal;color:var(--mu)}
+.gl{display:grid;grid-template-columns:1fr auto 1fr;gap:6px;margin-top:14px;font-size:13px;color:var(--mu);align-items:start}.gl div:first-child{text-align:right}.gl div:last-child{text-align:left}
+.gl div:first-child,.gl div:last-child{min-height:1px}
+.gl .bl{width:46px;text-align:center;font-size:12px;color:var(--tx)}
+.bar{display:flex;gap:8px;padding:12px 16px;background:var(--s1);border-top:1px solid var(--line);flex-wrap:wrap}
+.b{padding:10px 16px;border:0;border-radius:20px;background:var(--s2);color:var(--tx);font:500 14px Roboto,sans-serif;cursor:pointer}
+.b.pri{background:var(--acc);color:var(--onacc)}.b.sm{padding:6px 12px;font-size:13px}.b.line{background:transparent;border:1px solid var(--line)}
+.sec{padding:16px}.sec h2{margin:0 0 12px;font-size:16px;font-weight:500}
+.note{font-size:13px;color:var(--mu);margin:6px 0}
+.pl{padding:10px 0}.pl .nm{font-size:15px}.pl small{display:block;color:var(--mu);font-size:14px;margin-top:2px}
+.rowp{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}.rowp:last-child{border:0}.rowp .t{flex:1;min-width:0}.rowp small{display:block;color:var(--mu)}
+.chip{font-size:13px;color:var(--gold);white-space:nowrap}
+.cp{color:var(--mu)}
+.card{background:var(--s1);border-radius:8px;padding:16px;margin:0 16px 16px}
+label{display:block;font-size:13px;color:var(--mu);margin:12px 0 4px}
+input,select{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--tx);font-size:16px}
+.cl{display:flex;flex-wrap:wrap;gap:6px}
+.cl button{padding:8px 13px;border-radius:16px;border:1px solid var(--line);background:transparent;color:var(--tx);cursor:pointer;font-size:14px}.cl button.on{background:var(--acc);border-color:var(--acc);color:var(--onacc)}
+.cl.n button{width:38px;padding:8px 0;text-align:center}
+.sr{display:grid;grid-template-columns:1fr 2fr 1fr;align-items:center;text-align:center;padding:12px 0}
+.sr span:nth-child(2){font-size:14px}
+.pill{display:inline-block;min-width:34px;padding:3px 10px;border-radius:14px;color:#fff;font-weight:500}.pill.l{background:var(--red)}.pill.r{background:var(--red2)}
+.ttl{display:grid;grid-template-columns:1fr;text-align:center;color:var(--mu);font-size:13px;padding:6px 0 2px}
+.tl{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.tl:last-child{border:0}.tl .mn{width:44px;color:var(--mu)}
+table{width:100%;border-collapse:collapse}th,td{padding:10px 4px;text-align:center}th{color:var(--mu);font-weight:400;font-size:13px}th:first-child,td:first-child{text-align:left}tr+tr td{border-top:1px solid var(--line)}
+.motm{border:1px solid var(--gold)}.motm .big{font-size:22px;font-weight:500}
+.empty{color:var(--mu);padding:8px 0}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (prefers-reduced-motion:no-preference){.b,.tabs button{transition:background .15s}}
+</style>
+</head>
+<body>
+<div class="app"><div class="tabs" id="nav"></div><main id="app"></main></div>
+<script>
+const SPECS=["Passing","Scoring","Shooting","Dribbling","Teamwork"];
+const SEED=["Abdul Rafay", "Faiq Ali Khan", "Hamza Yildirim", "Hassan", "Ali", "Atif Rajpoot", "Saad Naseer", "Tariq Azeez", "Zian", "Wahid Bux", "Zubair", "Hasnain", "Waris", "Muhammad Saad"];
+let S={players:[],want:0,team:null,pool:null,tab:"match",sub:"timeline",match:{opp:"Opponents",us:"My Team",them:0,ev:[],motm:"",st:"Live"}};
+let draft={rating:0,spec:"",name:""},pickCap="",goalUI=false,editId="";
+try{const x=localStorage.getItem("sqs1");if(x)S=Object.assign(S,JSON.parse(x))}catch(e){}
+if(!S.seeded){SEED.forEach((n,i)=>{if(!S.players.some(p=>p.name.toLowerCase()===n.toLowerCase()))S.players.push({id:"s"+i,name:n,rating:0,spec:""})});S.seeded=true}
+if(!S.match.st)S.match.st="Live";
+const save=()=>{try{localStorage.setItem("sqs1",JSON.stringify(S))}catch(e){}};
+const $=s=>document.querySelector(s);
+const esc=t=>String(t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const P=id=>S.players.find(p=>p.id===id);
+const act=()=>S.players.filter(p=>p.on!==false);
+const size=()=>S.want?Math.min(S.want,act().length):act().length;
+const rt=p=>p.rating?p.rating+"/10":"Not rated";
+const sp=p=>p.spec||"No speciality";
+const ini=n=>n.trim().split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase()||"?";
+const stats=id=>({g:S.match.ev.filter(e=>e.s===id).length,a:S.match.ev.filter(e=>e.a===id).length});
+const motmScore=id=>{const t=stats(id);return t.g*3+t.a*2+P(id).rating/10};
+function autoMotm(){if(!S.team||!S.match.ev.length)return "";return [...S.team.ids].sort((a,b)=>motmScore(b)-motmScore(a))[0]}
+function best(l){return [...l].sort((a,b)=>b.rating-a.rating||(b.spec==="Teamwork")-(a.spec==="Teamwork")||a.name.localeCompare(b.name))}
+const newM=()=>({opp:S.match.opp,us:S.match.us,them:0,ev:[],motm:"",st:"Live"});
+function resetT(){S.team=null;S.pool=null;pickCap="";S.match=newM()}
+const pill=(a,b)=>[a>b&&a>0?`<span class="pill l">${a}</span>`:a,b>a&&b>0?`<span class="pill r">${b}</span>`:b];
+
+function render(){
+ $("#nav").innerHTML=[["match","Match"],["team","Team"],["players","Players"]].map(([k,l])=>`<button data-act="tab" data-v="${k}" class="${S.tab===k?"on":""}">${l}</button>`).join("");
+ $("#app").innerHTML=({players:vPlayers,team:vTeam,match:vMatch})[S.tab]();
+ save();
+}
+function editBlock(p){return `<div style="padding:4px 0 12px"><div class="cl n">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button data-act="erate" data-id="${p.id}" data-v="${n}" class="${p.rating>=n?"on":""}">${n}</button>`).join("")}</div><div class="cl" style="margin-top:8px">${SPECS.map(x=>`<button data-act="espec" data-id="${p.id}" data-v="${x}" class="${p.spec===x?"on":""}">${x}</button>`).join("")}</div></div>`}
+function vPlayers(){
+ return `<div class="sec"><h2>Add a player</h2>
+ <label for="pn">Name</label><input id="pn" value="${esc(draft.name)}" placeholder="Player name" autocomplete="off">
+ <label>Rating, 1–10 stars (optional)</label><div class="cl n">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button data-act="rate" data-v="${n}" class="${draft.rating>=n?"on":""}" aria-label="${n} stars">${n}</button>`).join("")}</div>
+ <label>Speciality (optional)</label><div class="cl">${SPECS.map(s=>`<button data-act="spec" data-v="${s}" class="${draft.spec===s?"on":""}">${s}</button>`).join("")}</div>
+ <p class="note" id="perr"></p><button class="b pri" data-act="addp">Add player</button></div>
+ <div class="sec" style="border-top:1px solid var(--line)"><h2>Squad · ${act().length} active of ${S.players.length}</h2>
+ <p class="note">Tap Active to switch off a player who is not available. Inactive players are skipped when the team is made.</p>
+ ${S.players.length?S.players.map(p=>`<div class="rowp" style="${p.on===false?"opacity:.5":""}"><div class="t"><div>${esc(p.name)}</div><small>${sp(p)} • ${p.on===false?"Inactive":"Active"}</small></div><span class="chip">${rt(p)}</span><button class="b sm line" data-act="edit" data-v="${p.id}">${editId===p.id?"Done":"Rate"}</button><button class="b sm ${p.on===false?"line":""}" data-act="tog" data-v="${p.id}">${p.on===false?"Set active":"Active"}</button><button class="b sm line" data-act="delp" data-v="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button></div>${editId===p.id?editBlock(p):""}`).join(""):'<div class="empty">No players yet.</div>'}</div>`;
+}
+function squad(ids,title){return `<div class="sec"><h2>${esc(title)}</h2>${ids.map(id=>{const p=P(id);return `<div class="pl"><div class="nm">${esc(p.name)}${S.team.captain===id?' <span class="cp">(C)</span>':""}</div><small>${sp(p)} • ${rt(p)}</small></div>`}).join("")}</div>`}
+function vTeam(){
+ if(S.pool){
+  const t=S.team,left=S.pool,cap=P(t.captain),full=t.ids.length>=size()||!left.length;
+  return `<div class="sec"><h2>Manual selection</h2><p class="note">Captain: ${esc(cap.name)}. Tap Pick to add a player; he leaves the list. ${t.ids.length}/${size()} picked.</p>
+  ${full?`<button class="b pri" data-act="done">Finish team</button>`:left.length?best(left).map(p=>`<div class="rowp"><div class="t"><div>${esc(p.name)}</div><small>${sp(p)}</small></div><span class="chip">${rt(p)}</span><button class="b sm pri" data-act="pick" data-v="${p.id}">Pick</button></div>`).join(""):""}
+  <div style="margin-top:12px"><button class="b line sm" data-act="resetteam">Cancel</button></div></div>${squad(t.ids,"Picked so far")}`;
+ }
+ if(S.team&&S.team.ids.length){
+  return squad(S.team.ids,S.match.us+" squad")+`<div class="bar" style="border:0;background:transparent"><button class="b pri" data-act="tab" data-v="match">Go to match</button><button class="b line" data-act="resetteam">Make a new team</button></div>`;
+ }
+ const n=act().length;
+ return `<div class="sec"><h2>Make the team</h2><label for="sz">Players in the team (all available by default)</label><input id="sz" type="number" min="1" max="30" value="${size()}" ${n?"":"disabled"}>
+ <p class="note">${n?`${n} active player${n===1?"":"s"} available. Lower the number to pick fewer.`:"No active players. Add players or set some active."}</p>
+ ${act().some(p=>!p.rating)?'<p class="note">Some active players are not rated yet, so auto-pick puts them last. Use Rate on the Players tab.</p>':""}
+ <div style="margin-top:12px"><button class="b pri" data-act="auto">Auto-pick best team</button></div>
+ <p class="note">Auto-pick takes the highest rated players; the best one is captain.</p></div>
+ <div class="sec" style="border-top:1px solid var(--line)"><h2>Pick manually</h2><label for="cp">1. Choose the captain</label>
+ <select id="cp"><option value="">Select captain…</option>${best(act()).map(p=>`<option value="${p.id}" ${pickCap===p.id?"selected":""}>${esc(p.name)} (${rt(p)})</option>`).join("")}</select>
+ <div style="margin-top:12px"><button class="b" data-act="manual">2. Start picking players</button></div></div>`;
+}
+function scorers(){const o={};S.match.ev.forEach(e=>{(o[e.s]=o[e.s]||[]).push(e.m)});return Object.entries(o).map(([id,ms])=>{const p=P(id);if(!p)return"";const mins=ms.filter(x=>x!=null).sort((a,b)=>a-b).map(x=>x+"'").join(", ");return esc(p.name)+" "+(mins||(ms.length>1?"("+ms.length+")":""))}).join("<br>")}
+function vMatch(){
+ if(!S.team||!S.team.ids.length)return `<div class="sec"><h2>No team yet</h2><p class="empty">Make a team first, then track the match here.</p><button class="b pri" data-act="tab" data-v="team">Make a team</button></div>`;
+ const m=S.match,us=m.ev.length,live=m.st==="Live";
+ const head=`<div class="hd"><div class="lg"><span>Friendly · Today</span><b class="${live?"live":""}">${live?"Live":"Full-time"}</b></div>
+ <div class="sb"><div class="tm"><div class="crest">${esc(ini(m.us))}</div><div class="tn">${esc(m.us)}</div></div><div class="sc"><span>${us}</span><i>-</i><span>${m.them}</span></div><div class="tm"><div class="crest">${esc(ini(m.opp))}</div><div class="tn">${esc(m.opp)}</div></div></div>
+ <div class="gl"><div>${scorers()}</div><div class="bl">${us?"⚽":""}</div><div></div></div></div>`;
+ const bar=`<div class="bar"><button class="b pri" data-act="goalui">⚽ Our goal</button><button class="b" data-act="them" data-v="1">Opponent +1</button><button class="b line" data-act="undo">Undo goal</button></div>`;
+ const opts=S.team.ids.map(id=>`<option value="${id}">${esc(P(id).name)}</option>`).join("");
+ const gp=goalUI?`<div class="card" style="margin-top:16px"><div class="row2"><div><label for="gs">Scored by</label><select id="gs">${opts}</select></div><div><label for="ga">Assist by</label><select id="ga"><option value="">No assist</option>${opts}</select></div></div>
+ <label for="gm">Minute (optional)</label><input id="gm" type="number" min="0" max="130" inputmode="numeric" placeholder="e.g. 23">
+ <div style="margin-top:12px;display:flex;gap:8px"><button class="b pri" data-act="goal">Save goal</button><button class="b line" data-act="cancelgoal">Cancel</button></div></div>`:"";
+ const sub=`<div class="tabs" style="margin-top:${goalUI?0:0}px">${[["timeline","Timeline"],["lineups","Lineups"],["stats","Stats"],["edit","Edit"]].map(([k,l])=>`<button data-act="sub" data-v="${k}" class="${S.sub===k?"on":""}">${l}</button>`).join("")}</div>`;
+ let pane="";
+ if(S.sub==="timeline"){
+  const evs=m.ev.map((e,i)=>({...e,i})).sort((a,b)=>(a.m==null?999:a.m)-(b.m==null?999:b.m)||a.i-b.i);
+  pane=`<div class="sec"><h2>Timeline</h2>${evs.length?evs.map(e=>`<div class="tl"><div class="mn">${e.m!=null?e.m+"'":"⚽"}</div><div><div>⚽ ${esc(P(e.s)?P(e.s).name:"?")}</div>${e.a&&P(e.a)?`<small style="color:var(--mu)">Assist: ${esc(P(e.a).name)}</small>`:""}</div></div>`).join(""):'<div class="empty">No goals yet. Tap Our goal to add one.</div>'}${m.them?`<p class="note">${esc(m.opp)} goals: ${m.them}</p>`:""}</div>`;
+ }else if(S.sub==="lineups"){
+  pane=squad(S.team.ids,m.us+" lineup");
+ }else if(S.sub==="stats"){
+  const ga=m.ev.filter(e=>e.a).length,mid=m.motm||autoMotm(),ids=S.team.ids;
+  const mx=k=>Math.max(0,...ids.map(i=>stats(i)[k]));
+  const [pl,pr]=pill(us,m.them);
+  pane=`<div class="sec"><div class="ttl">TEAM STATS</div>
+  <div class="sr"><span>${pl}</span><span>Goals</span><span>${pr}</span></div>
+  <div class="sr"><span>${ga}</span><span>Assists</span><span>–</span></div></div>
+  <div class="card motm"><div class="note" style="margin:0 0 4px">Man of the match</div>${mid?`<div class="big">${esc(P(mid).name)}</div><p class="note">${stats(mid).g} goals, ${stats(mid).a} assists. ${m.motm?"Chosen by you.":"Picked from goals, assists and rating."}</p>`:'<div class="empty">Appears after the first goal.</div>'}</div>
+  <div class="sec" style="padding-top:0"><table><tr><th>Player</th><th>Goals</th><th>Assists</th></tr>${ids.map(id=>{const t=stats(id);return `<tr><td>${esc(P(id).name)}${S.team.captain===id?' <span class="cp">(C)</span>':""}</td><td>${t.g&&t.g===mx("g")?`<span class="pill l">${t.g}</span>`:t.g}</td><td>${t.a&&t.a===mx("a")?`<span class="pill l">${t.a}</span>`:t.a}</td></tr>`}).join("")}</table></div>`;
+ }else{
+  pane=`<div class="sec"><h2>Match settings</h2><div class="row2"><div><label for="tn">Your team name</label><input id="tn" value="${esc(m.us)}"></div><div><label for="on">Opponent name</label><input id="on" value="${esc(m.opp)}"></div></div>
+  <label for="mo">Man of the match</label><select id="mo"><option value="">Automatic</option>${S.team.ids.map(id=>`<option value="${id}" ${m.motm===id?"selected":""}>${esc(P(id).name)}</option>`).join("")}</select>
+  <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"><button class="b" data-act="status">${live?"Mark as full-time":"Back to live"}</button><button class="b line" data-act="them" data-v="-1">Opponent −1</button><button class="b line" data-act="newmatch">New match</button></div></div>`;
+ }
+ return head+bar+gp+sub+pane;
+}
+document.addEventListener("click",e=>{
+ const b=e.target.closest("[data-act]");if(!b)return;const a=b.dataset.act,v=b.dataset.v;
+ if(a==="tab"){S.tab=v}
+ else if(a==="sub"){S.sub=v}
+ else if(a==="rate"){draft.name=$("#pn").value;draft.rating=+v}
+ else if(a==="spec"){draft.name=$("#pn").value;draft.spec=v}
+ else if(a==="addp"){const n=$("#pn").value.trim();
+  if(!n){render();$("#perr").textContent="Enter a name.";return}
+  S.players.push({id:"p"+Date.now()+Math.random().toString(36).slice(2,5),name:n,rating:draft.rating||0,spec:draft.spec||""});draft={rating:0,spec:"",name:""}}
+ else if(a==="edit"){editId=editId===v?"":v}
+ else if(a==="erate"){P(b.dataset.id).rating=+v}
+ else if(a==="espec"){P(b.dataset.id).spec=v}
+ else if(a==="tog"){const p=P(v);p.on=p.on===false;if(S.team&&S.team.ids.includes(v)&&p.on===false)resetT()}
+ else if(a==="delp"){if(S.team&&S.team.ids.includes(v))resetT();S.players=S.players.filter(p=>p.id!==v);if(S.pool)S.pool=S.pool.filter(p=>p.id!==v)}
+ else if(a==="auto"){readSize();if(!act().length)return;const t=best(act()).slice(0,size());S.team={ids:t.map(p=>p.id),captain:t[0].id};S.pool=null;S.match=newM()}
+ else if(a==="manual"){readSize();pickCap=$("#cp").value;if(!pickCap){alert("Choose a captain first.");return}
+  S.team={ids:[pickCap],captain:pickCap};S.pool=act().filter(p=>p.id!==pickCap);S.match=newM()}
+ else if(a==="pick"){S.team.ids.push(v);S.pool=S.pool.filter(p=>p.id!==v)}
+ else if(a==="done"){S.pool=null}
+ else if(a==="resetteam"){resetT()}
+ else if(a==="goalui"){goalUI=true;S.sub=S.sub}
+ else if(a==="cancelgoal"){goalUI=false}
+ else if(a==="goal"){const s=$("#gs").value,as=$("#ga").value,mn=parseInt($("#gm").value);if(as&&as===s){alert("Scorer and assist must be different players.");return}
+  S.match.ev.push({s,a:as,m:(mn>=0&&mn<=130)?mn:null});goalUI=false}
+ else if(a==="undo"){S.match.ev.pop()}
+ else if(a==="them"){S.match.them=Math.max(0,S.match.them+ +v)}
+ else if(a==="status"){S.match.st=S.match.st==="Live"?"Full-time":"Live"}
+ else if(a==="newmatch"){if(confirm("Start a new match? Score and stats reset.")){S.match=newM()}else return}
+ render();
+});
+document.addEventListener("change",e=>{
+ if(e.target.id==="mo"){S.match.motm=e.target.value;render()}
+ if(e.target.id==="cp"){pickCap=e.target.value}
+ if(e.target.id==="sz"){readSize()}
+});
+document.addEventListener("input",e=>{
+ if(e.target.id==="tn"){S.match.us=e.target.value;save()}
+ if(e.target.id==="on"){S.match.opp=e.target.value;save()}
+});
+function readSize(){const z=$("#sz");if(z){const n=parseInt(z.value)||0;S.want=(n>=1&&n<act().length)?n:0}}
+render();
+</script>
+</body>
+</html>
