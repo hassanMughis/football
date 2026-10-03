@@ -4,3 +4,6 @@
 .DS_Store
 *.log
 .env*.local
+/.backups/
+/.env*
+!/.env.example
