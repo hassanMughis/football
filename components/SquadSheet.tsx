@@ -965,7 +965,7 @@ export default function SquadSheet() {
   }
 
   function MatchView() {
-    if (!state.team?.ids.length) return <><div className="sec"><h2>No active match</h2><p className="empty">Create two teams, then host their match here.</p><button className="b pri" onClick={() => setTab("team")}>Set up teams</button></div>{HistoryView()}</>;
+    if (!state.team?.ids.length || state.match.st !== "Live") return <><div className="sec"><h2>No active match</h2><p className="empty">Your teams are ready. Host a match when everyone is ready to play.</p><button className="b pri" onClick={() => setTab("team")}>{state.balancedTeams ? "Review teams and host match" : "Set up teams"}</button></div>{HistoryView()}</>;
     const match = state.match; const team1Goals = match.ev.filter((goal) => goal.team !== 2).length; const team2Goals = match.them + match.ev.filter((goal) => goal.team === 2).length; const live = match.st === "Live";
     const scorerLines = (teamNumber: 1 | 2) => Object.entries(match.ev.filter((goal) => (goal.team || 1) === teamNumber).reduce<Record<string, (number | null)[]>>((result, goal) => { (result[goal.s] ||= []).push(goal.m); return result; }, {}));
     const scoringIds = goalTeam === 1 ? state.team.ids : state.balancedTeams?.team2.ids || [];
@@ -1044,7 +1044,7 @@ export default function SquadSheet() {
     setShowGoal(false);
     setOpenHistoryId(entry.id);
     setHistoryDetailTab("timeline");
-    setState((current) => ({ ...current, sub: "history", match: { ...current.match, st: "Full-time" }, history: [entry, ...current.history].slice(0, 100) }));
+    setState((current) => ({ ...current, team: null, sub: "history", match: newMatch(current.match), history: [entry, ...current.history].slice(0, 100) }));
   }
 
   function Stats() {
