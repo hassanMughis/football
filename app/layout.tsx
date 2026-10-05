@@ -1,23 +1,21 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Two Team Maker",
-  description: "Split available players into two balanced teams and save the squad.",
-  icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
-  },
+  title: "Squad Sheet – Football Team Builder",
+  description: "Build a football squad and track a live match.",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body>{children}</body>
     </html>
   );
 }
