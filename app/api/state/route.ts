@@ -9,6 +9,21 @@ const specialities = new Set(["", "Passing", "Scoring", "Shooting", "Dribbling",
 const maxPlayerSkills = 4;
 const cardStyles = new Set(["classic", "royal", "electric", "crimson"]);
 const positions = new Set(["GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST"]);
+const positionStatOffsets: Record<string, Record<typeof statNames[number], number>> = {
+  GK: { PAC: -15, SHO: -30, PAS: -5, DRI: -15, DEF: 30, PHY: 35 },
+  CB: { PAC: -7, SHO: -22, PAS: -4, DRI: -12, DEF: 25, PHY: 20 },
+  LB: { PAC: 7, SHO: -13, PAS: 4, DRI: 3, DEF: 10, PHY: -11 },
+  RB: { PAC: 7, SHO: -13, PAS: 4, DRI: 3, DEF: 10, PHY: -11 },
+  CDM: { PAC: -2, SHO: -10, PAS: 7, DRI: -1, DEF: 12, PHY: -6 },
+  CM: { PAC: 0, SHO: -2, PAS: 9, DRI: 6, DEF: -5, PHY: -8 },
+  CAM: { PAC: 3, SHO: 5, PAS: 10, DRI: 10, DEF: -23, PHY: -5 },
+  LM: { PAC: 8, SHO: 3, PAS: 7, DRI: 8, DEF: -18, PHY: -8 },
+  RM: { PAC: 8, SHO: 3, PAS: 7, DRI: 8, DEF: -18, PHY: -8 },
+  LW: { PAC: 12, SHO: 7, PAS: 4, DRI: 12, DEF: -30, PHY: -5 },
+  RW: { PAC: 12, SHO: 7, PAS: 4, DRI: 12, DEF: -30, PHY: -5 },
+  CF: { PAC: 5, SHO: 10, PAS: 5, DRI: 8, DEF: -30, PHY: 2 },
+  ST: { PAC: 8, SHO: 12, PAS: 1, DRI: 7, DEF: -35, PHY: 7 },
+};
 
 type JsonObject = Record<string, unknown>;
 type PlayerRow = {
@@ -68,6 +83,12 @@ function normalizedSkills(value: unknown, legacySkill: unknown) {
   return [...new Set(candidates.map(String).filter((skill) => skill && specialities.has(skill)))].slice(0, maxPlayerSkills);
 }
 
+function defaultPositionFor(player: JsonObject, skills = normalizedSkills(player.skills, player.spec)) {
+  const savedPosition = String(player.position || "");
+  if (positions.has(savedPosition)) return savedPosition;
+  return ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" } as Record<string, string>)[skills[0]] || "CM";
+}
+
 function generatedStats(player: JsonObject) {
   const rating = Math.max(0, Math.min(10, Math.round(numberValue(player.rating) * 2) / 2));
   const skills = normalizedSkills(player.skills, player.spec);
@@ -89,7 +110,7 @@ function generatedStats(player: JsonObject) {
     if (skills.includes("Heading") && (label === "SHO" || label === "PHY")) total += 3;
     return total;
   };
-  const offsets = { PAC: 1, SHO: -1, PAS: 0, DRI: 2, DEF: -8, PHY: -3 } as const;
+  const offsets = positionStatOffsets[defaultPositionFor(player, skills)] || positionStatOffsets.CM;
   const stats = Object.fromEntries(statNames.map((label) => [label, Math.round(Math.max(1, Math.min(99, base + offsets[label] + boost(label))))])) as Record<typeof statNames[number], number>;
   return { OVR: customOverall ?? Math.round(statNames.reduce((sum, label) => sum + stats[label], 0) / statNames.length), ...stats };
 }
@@ -111,8 +132,7 @@ function validateAndEnrichState(value: unknown) {
     const rawCustomOverall = candidate.customOverall;
     const customOverall = rawCustomOverall === undefined || rawCustomOverall === null || rawCustomOverall === "" ? null : numberValue(rawCustomOverall, Number.NaN);
     if (customOverall !== null && (!Number.isInteger(customOverall) || customOverall < 1 || customOverall > 99)) throw new Error("Custom OVR must be a whole number from 1 to 99.");
-    const defaultPosition = ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" } as Record<string, string>)[spec] || "CM";
-    const position = positions.has(String(candidate.position || "")) ? String(candidate.position) : defaultPosition;
+    const position = defaultPositionFor(candidate, skills);
     const cardStyle = cardStyles.has(String(candidate.cardStyle || "")) ? String(candidate.cardStyle) : "classic";
     const flag = flagEmoji(candidate.flag);
     const normalized = { ...candidate, id, name, rating, spec, skills, customOverall, position, cardStyle, flag, on: candidate.on !== false };

@@ -32,6 +32,21 @@ const POSITION_SKILL_PRIORITY: Record<string, string[]> = {
   CF: ["Scoring", "Shooting", "Heading", "Dribbling", "Passing"],
   ST: ["Scoring", "Shooting", "Heading", "Pace", "Strength"],
 };
+const POSITION_STAT_OFFSETS: Record<string, Record<string, number>> = {
+  GK: { PAC: -15, SHO: -30, PAS: -5, DRI: -15, DEF: 30, PHY: 35 },
+  CB: { PAC: -7, SHO: -22, PAS: -4, DRI: -12, DEF: 25, PHY: 20 },
+  LB: { PAC: 7, SHO: -13, PAS: 4, DRI: 3, DEF: 10, PHY: -11 },
+  RB: { PAC: 7, SHO: -13, PAS: 4, DRI: 3, DEF: 10, PHY: -11 },
+  CDM: { PAC: -2, SHO: -10, PAS: 7, DRI: -1, DEF: 12, PHY: -6 },
+  CM: { PAC: 0, SHO: -2, PAS: 9, DRI: 6, DEF: -5, PHY: -8 },
+  CAM: { PAC: 3, SHO: 5, PAS: 10, DRI: 10, DEF: -23, PHY: -5 },
+  LM: { PAC: 8, SHO: 3, PAS: 7, DRI: 8, DEF: -18, PHY: -8 },
+  RM: { PAC: 8, SHO: 3, PAS: 7, DRI: 8, DEF: -18, PHY: -8 },
+  LW: { PAC: 12, SHO: 7, PAS: 4, DRI: 12, DEF: -30, PHY: -5 },
+  RW: { PAC: 12, SHO: 7, PAS: 4, DRI: 12, DEF: -30, PHY: -5 },
+  CF: { PAC: 5, SHO: 10, PAS: 5, DRI: 8, DEF: -30, PHY: 2 },
+  ST: { PAC: 8, SHO: 12, PAS: 1, DRI: 7, DEF: -35, PHY: 7 },
+};
 const CARD_STYLES = [
   { id: "classic", name: "Classic Gold", src: "/card-templates/classic-gold.png", cleanSrc: "/card-templates/classic-gold-clean.png" },
   { id: "royal", name: "Royal Gold", src: "/card-templates/royal-gold.png", cleanSrc: "/card-templates/royal-gold-clean.png" },
@@ -296,8 +311,9 @@ const generatedCardStats = (player: Player) => {
     if (skills.includes("Heading") && (label === "SHO" || label === "PHY")) total += 3;
     return total;
   };
-  const value = (label: string, offset: number) => String(Math.round(Math.max(1, Math.min(99, base + offset + boost(label)))));
-  return [["PAC", value("PAC", 1)], ["SHO", value("SHO", -1)], ["PAS", value("PAS", 0)], ["DRI", value("DRI", 2)], ["DEF", value("DEF", -8)], ["PHY", value("PHY", -3)]];
+  const offsets = POSITION_STAT_OFFSETS[defaultPosition(player)] || POSITION_STAT_OFFSETS.CM;
+  const value = (label: string) => String(Math.round(Math.max(1, Math.min(99, base + offsets[label] + boost(label)))));
+  return [["PAC", value("PAC")], ["SHO", value("SHO")], ["PAS", value("PAS")], ["DRI", value("DRI")], ["DEF", value("DEF")], ["PHY", value("PHY")]];
 };
 const calculatedOverall = (player: Player) => {
   const values = generatedCardStats(player).map(([, value]) => Number(value)).filter(Number.isFinite);
@@ -331,6 +347,38 @@ const positionFamily = (position: string) => {
   if (["CB", "LB", "RB"].includes(position)) return "defence";
   if (["CDM", "CM", "CAM", "LM", "RM"].includes(position)) return "midfield";
   return "attack";
+};
+
+const POSITION_STAT_WEIGHTS: Record<string, Record<string, number>> = {
+  GK: { PAC: .10, SHO: .05, PAS: .10, DRI: .05, DEF: .45, PHY: .25 },
+  CB: { PAC: .12, SHO: .03, PAS: .10, DRI: .05, DEF: .45, PHY: .25 },
+  LB: { PAC: .22, SHO: .05, PAS: .16, DRI: .14, DEF: .28, PHY: .15 },
+  RB: { PAC: .22, SHO: .05, PAS: .16, DRI: .14, DEF: .28, PHY: .15 },
+  CDM: { PAC: .10, SHO: .06, PAS: .25, DRI: .13, DEF: .29, PHY: .17 },
+  CM: { PAC: .10, SHO: .10, PAS: .30, DRI: .20, DEF: .15, PHY: .15 },
+  CAM: { PAC: .12, SHO: .20, PAS: .28, DRI: .27, DEF: .05, PHY: .08 },
+  LM: { PAC: .22, SHO: .15, PAS: .23, DRI: .25, DEF: .05, PHY: .10 },
+  RM: { PAC: .22, SHO: .15, PAS: .23, DRI: .25, DEF: .05, PHY: .10 },
+  LW: { PAC: .27, SHO: .22, PAS: .14, DRI: .27, DEF: .03, PHY: .07 },
+  RW: { PAC: .27, SHO: .22, PAS: .14, DRI: .27, DEF: .03, PHY: .07 },
+  CF: { PAC: .15, SHO: .30, PAS: .18, DRI: .22, DEF: .05, PHY: .10 },
+  ST: { PAC: .22, SHO: .38, PAS: .07, DRI: .15, DEF: .03, PHY: .15 },
+};
+
+const weightedPositionRating = (player: Player, position: string) => {
+  const stats = Object.fromEntries(generatedCardStats(player).map(([label, value]) => [label, Number(value) || 0]));
+  return Object.entries(POSITION_STAT_WEIGHTS[position] || POSITION_STAT_WEIGHTS.CM).reduce((total, [stat, weight]) => total + (stats[stat] || 0) * weight, 0);
+};
+
+const positionOverall = (player: Player, assignedPosition?: string) => {
+  const originalOverall = displayedOverall(player);
+  if (originalOverall === null) return null;
+  const mainPosition = defaultPosition(player);
+  const position = assignedPosition || mainPosition;
+  if (position === mainPosition) return originalOverall;
+  const positionDifference = weightedPositionRating(player, position) - weightedPositionRating(player, mainPosition);
+  const goalkeeperMismatch = (position === "GK") !== (mainPosition === "GK") ? 18 : 0;
+  return Math.max(1, Math.min(99, Math.round(originalOverall + positionDifference - goalkeeperMismatch)));
 };
 
 const positionFit = (item: Player, slot: string) => {
@@ -758,7 +806,7 @@ export default function SquadSheet() {
     const badgeSrc = SKILL_BADGES[featuredSkill] || "/badges/squad-sheet-fc.png";
     const secondarySkills = skills.filter((skill) => skill !== featuredSkill);
     const cardStats = generatedCardStats(item);
-    const overall = displayedOverall(item) ?? "–";
+    const overall = positionOverall(item, positionOverride) ?? "–";
     return <article className={`player-card${item.on === false ? " is-inactive" : ""}${compact ? " is-compact" : ""}`}>
       <div className={`player-card__visual card-theme-${design.id}`}>
         <img className="player-card__frame" src={item.image ? design.cleanSrc : design.src} alt="" aria-hidden="true" />
@@ -778,11 +826,12 @@ export default function SquadSheet() {
 
   function RosterRow({ item, captain = false, lineupPosition, children, rowKey }: { item: Player; captain?: boolean; lineupPosition?: string; children?: React.ReactNode; rowKey?: React.Key }) {
     const open = openRosterCardId === item.id;
+    const currentOverall = positionOverall(item, lineupPosition);
     return <div className={`roster-entry${open ? " is-open" : ""}`} key={rowKey}>
       <div className="roster-row">
         <button className="roster-player-button" onClick={() => setOpenRosterCardId(open ? "" : item.id)} aria-expanded={open}>
           <span className="roster-avatar">{item.image ? <img src={item.image} alt="" /> : initials(item.name)}</span>
-          <span className="roster-copy"><strong>{item.name}{captain && <span className="cp"> (C)</span>}</strong><small>{lineupPosition || defaultPosition(item)} · {specialityLabel(item)}</small></span>
+          <span className="roster-copy"><strong>{item.name}{captain && <span className="cp"> (C)</span>}</strong><small>{lineupPosition || defaultPosition(item)} · {currentOverall ?? "–"} OVR · {specialityLabel(item)}</small></span>
           <span className="roster-chevron" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
         </button>
         {children && <div className="roster-actions">{children}</div>}
@@ -851,6 +900,7 @@ export default function SquadSheet() {
       return <button type="button" draggable={unlocked} className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}${draggedFormationId === id ? " is-dragging" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onDragStart={(event) => { if (!unlocked) return; setDraggedFormationId(id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", id); }} onDragEnd={() => setDraggedFormationId("")} onDragOver={(event) => { if (unlocked && draggedFormationId && draggedFormationId !== id) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, assignedPosition, id); }} onClick={() => unlocked && draggedFormationId && draggedFormationId !== id ? moveFormationPlayer(draggedFormationId, assignedPosition, id) : setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
         <img className="formation-mini-frame" src={item.image ? design.cleanSrc : design.src} alt="" />
         {item.image && <img className="formation-mini-photo" src={item.image} alt="" />}
+        <span className="formation-mini-overall">{positionOverall(item, assignedPosition) ?? "–"}</span>
         <span className="formation-mini-position">{assignedPosition}</span>
         <span className="formation-mini-name">{item.name}</span>
         {selected.captain === id && <span className="formation-mini-captain">C</span>}
