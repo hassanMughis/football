@@ -3,6 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const SPECIALITIES = ["Passing", "Scoring", "Shooting", "Dribbling", "Teamwork"] as const;
+const SKILL_BADGES: Record<string, string> = {
+  Passing: "/badges/skills/passing.png",
+  Scoring: "/badges/skills/scoring.png",
+  Shooting: "/badges/skills/shooting.png",
+  Dribbling: "/badges/skills/dribbling.png",
+  Teamwork: "/badges/skills/teamwork.png",
+};
 const POSITIONS = ["GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST"] as const;
 const CARD_STYLES = [
   { id: "classic", name: "Classic Gold", src: "/card-templates/classic-gold.png", cleanSrc: "/card-templates/classic-gold-clean.png" },
@@ -642,13 +649,14 @@ export default function SquadSheet() {
     const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
     const flagCode = flagCountryCode(item.flag);
     const flagSrc = flagCode === "PK" ? "/flags/pk.svg" : flagCode ? `https://flagcdn.com/w40/${flagCode.toLowerCase()}.png` : "";
+    const badgeSrc = SKILL_BADGES[item.spec] || "/badges/squad-sheet-fc.png";
     const cardStats = generatedCardStats(item);
     const numericStats = cardStats.map(([, value]) => Number(value)).filter(Number.isFinite);
     const overall = numericStats.length ? Math.round(numericStats.reduce((sum, value) => sum + value, 0) / numericStats.length) : "–";
     return <article className={`player-card${item.on === false ? " is-inactive" : ""}${compact ? " is-compact" : ""}`}>
       <div className={`player-card__visual card-theme-${design.id}`}>
         <img className="player-card__frame" src={item.image ? design.cleanSrc : design.src} alt="" aria-hidden="true" />
-        <div className="player-card__strip"><strong>{overall}</strong><span>{positionOverride || defaultPosition(item)}</span><span className="player-card__flag">{flagSrc ? <img src={flagSrc} alt={`${flagCode} flag`} /> : flagEmoji(item.flag)}</span><img src="/badges/squad-sheet-fc.png" alt="Squad Sheet FC badge" /></div>
+        <div className="player-card__strip"><strong>{overall}</strong><span>{positionOverride || defaultPosition(item)}</span><span className="player-card__flag">{flagSrc ? <img src={flagSrc} alt={`${flagCode} flag`} /> : flagEmoji(item.flag)}</span><img src={badgeSrc} alt={item.spec ? `${item.spec} skill badge` : "Squad Sheet FC badge"} /></div>
         <div className="player-card__photo">
           {item.image && <img src={item.image} alt={`${item.name} portrait`} />}
         </div>
