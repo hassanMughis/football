@@ -31,10 +31,11 @@ update public.players
 set rating = greatest(1, least(10, round((rating - 42.5) / 5.0)::integer))
 where rating > 10;
 alter table public.players alter column rating set default 0;
+alter table public.players alter column rating type numeric(3,1) using round(rating::numeric * 2) / 2;
 
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'players_rating_check' and conrelid = 'public.players'::regclass) then
-    alter table public.players add constraint players_rating_check check (rating between 0 and 10);
+    alter table public.players add constraint players_rating_check check (rating between 0 and 10 and rating * 2 = trunc(rating * 2));
   end if;
   alter table public.players drop constraint if exists players_speciality_check;
   alter table public.players add constraint players_speciality_check check (speciality in ('', 'Passing', 'Scoring', 'Shooting', 'Dribbling', 'Teamwork', 'Goalkeeping', 'Defending', 'Pace', 'Strength', 'Heading'));
@@ -171,7 +172,7 @@ begin
     ) values (
       player_id,
       btrim(item->>'name'),
-      coalesce((item->>'rating')::integer, 0),
+      coalesce((item->>'rating')::numeric, 0),
       coalesce(item->>'spec', ''),
       nullif(item->>'image', ''),
       coalesce(nullif(item->>'cardStyle', ''), 'classic'),

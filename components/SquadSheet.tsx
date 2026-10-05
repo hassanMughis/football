@@ -110,6 +110,42 @@ const initialState = (): AppState => ({
 });
 
 const legacyRatingToStars = (rating: number) => Math.max(1, Math.min(10, Math.round((rating - 42.5) / 5)));
+const normalizeRating = (rating: number) => Math.max(0, Math.min(10, Math.round(rating * 2) / 2));
+
+function RatingPicker({ value, onChange }: { value: number; onChange: (rating: number) => void }) {
+  const [hoverRating, setHoverRating] = useState<number | null>(null);
+  const previewRating = hoverRating ?? value;
+  const ratingFromPointer = (number: number, button: HTMLButtonElement, clientX: number) => {
+    const bounds = button.getBoundingClientRect();
+    return number - (clientX - bounds.left < bounds.width / 2 ? 0.5 : 0);
+  };
+
+  return <div className="rating-picker" onPointerLeave={() => setHoverRating(null)}>
+    <div className="rating-buttons" role="radiogroup" aria-label="Player rating out of 10">
+      {Array.from({ length: 10 }, (_, index) => index + 1).map((number) => {
+        const fill = previewRating >= number ? 100 : previewRating === number - 0.5 ? 50 : 0;
+        return <button
+          type="button"
+          key={number}
+          className={`rating-step${fill === 100 ? " is-full" : fill === 50 ? " is-half" : ""}`}
+          style={{ "--rating-fill": `${fill}%` } as React.CSSProperties}
+          aria-label={`${number - 0.5} on the left half or ${number} on the right half`}
+          aria-checked={value === number || value === number - 0.5}
+          role="radio"
+          onPointerMove={(event) => setHoverRating(ratingFromPointer(number, event.currentTarget, event.clientX))}
+          onFocus={() => setHoverRating(null)}
+          onClick={(event) => onChange(event.detail === 0 ? number : ratingFromPointer(number, event.currentTarget, event.clientX))}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            onChange(number - (event.key === "ArrowLeft" ? 0.5 : 0));
+          }}
+        >{number}</button>;
+      })}
+    </div>
+    <output className="rating-value" aria-live="polite">{hoverRating === null ? (value ? `${value}/10 selected` : "Not rated") : `${hoverRating}/10 preview`}</output>
+  </div>;
+}
 
 const restoreState = (value: unknown): AppState => {
   const base = initialState();
@@ -124,7 +160,7 @@ const restoreState = (value: unknown): AppState => {
       return {
         id: String(legacy.id),
         name: legacy.name.trim() || "Player",
-        rating: rawRating > 10 ? legacyRatingToStars(rawRating) : Math.max(0, Math.min(10, Math.round(rawRating))),
+        rating: rawRating > 10 ? legacyRatingToStars(rawRating) : normalizeRating(rawRating),
         spec: typeof legacy.spec === "string" ? legacy.spec : "",
         image: typeof legacy.image === "string" ? legacy.image : typeof legacy.imageUrl === "string" ? legacy.imageUrl : undefined,
         cardStyle: CARD_STYLES.some((style) => style.id === legacy.cardStyle) ? legacy.cardStyle : "classic",
@@ -215,7 +251,7 @@ const generatedCardStats = (player: Player) => {
     if (player.spec === "Heading" && (label === "SHO" || label === "PHY")) return 3;
     return 0;
   };
-  const value = (label: string, offset: number) => String(Math.max(1, Math.min(99, base + offset + boost(label))));
+  const value = (label: string, offset: number) => String(Math.round(Math.max(1, Math.min(99, base + offset + boost(label)))));
   return [["PAC", value("PAC", 1)], ["SHO", value("SHO", -1)], ["PAS", value("PAS", 0)], ["DRI", value("DRI", 2)], ["DEF", value("DEF", -8)], ["PHY", value("PHY", -3)]];
 };
 
@@ -797,7 +833,7 @@ export default function SquadSheet() {
     return <>
       {unlocked && <div className="sec"><h2>Add a player</h2>
         <label htmlFor="pn">Name</label><input id="pn" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Player name" autoComplete="off" />
-        <label>Rating, 1–10 stars (optional)</label><div className="cl n">{Array.from({ length: 10 }, (_, i) => i + 1).map((number) => <button key={number} onClick={() => setDraft({ ...draft, rating: number })} className={draft.rating >= number ? "on" : ""} aria-label={`${number} stars`}>{number}</button>)}</div>
+        <label>Rating, 0.5–10 (optional)</label><RatingPicker value={draft.rating} onChange={(rating) => setDraft((current) => ({ ...current, rating }))} />
         <label>Speciality (optional)</label><div className="cl">{SPECIALITIES.map((spec) => <button key={spec} onClick={() => setDraft({ ...draft, spec })} className={draft.spec === spec ? "on" : ""}>{spec}</button>)}</div>
         <div className="player-details-row"><div><label htmlFor="position">Position</label><select id="position" value={draft.position} onChange={(e) => setDraft({ ...draft, position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label htmlFor="flag">Flag or country code</label><input id="flag" value={draft.flag} maxLength={8} onChange={(e) => setDraft({ ...draft, flag: e.target.value })} onBlur={() => setDraft((current) => ({ ...current, flag: flagEmoji(current.flag) }))} placeholder="🇵🇰 or PK" /></div></div>
         <label>Card design</label><div className="design-picker">{CARD_STYLES.map((style) => <button type="button" key={style.id} className={draft.cardStyle === style.id ? "on" : ""} onClick={() => setDraft({ ...draft, cardStyle: style.id })}><img src={style.src} alt="" /><span>{style.name}</span></button>)}</div>
@@ -811,7 +847,7 @@ export default function SquadSheet() {
             <button className={`b sm ${item.on === false ? "line" : ""}`} onClick={() => togglePlayer(item.id)}>{item.on === false ? "Set active" : "Active"}</button>
             <button className="b sm line danger" onClick={() => deletePlayer(item.id)}>Delete</button>
           </> : undefined })}
-          {unlocked && editId === item.id && <div className="edit-block card-editor"><label htmlFor={`player-name-${item.id}`}>Player name</label><input id={`player-name-${item.id}`} defaultValue={item.name} maxLength={60} autoComplete="off" onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} onBlur={(event) => { const name = event.currentTarget.value.trim(); if (!name) { event.currentTarget.value = item.name; window.alert("Player name cannot be empty."); return; } if (name !== item.name) updatePlayer(item.id, { name }); }} /><label>Rating</label><div className="cl n">{Array.from({ length: 10 }, (_, i) => i + 1).map((number) => <button key={number} onClick={() => updatePlayer(item.id, { rating: number })} className={item.rating >= number ? "on" : ""}>{number}</button>)}</div><label>Speciality</label><div className="cl edit-specialities">{SPECIALITIES.map((spec) => <button key={spec} onClick={() => updatePlayer(item.id, { spec })} className={item.spec === spec ? "on" : ""}>{spec}</button>)}</div><div className="player-details-row"><div><label>Position</label><select value={defaultPosition(item)} onChange={(e) => updatePlayer(item.id, { position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label>Flag or country code</label><input value={item.flag || "🇵🇰"} maxLength={8} onChange={(e) => updatePlayer(item.id, { flag: e.target.value })} onBlur={(e) => updatePlayer(item.id, { flag: flagEmoji(e.currentTarget.value) })} placeholder="🇵🇰 or PK" /></div></div><label>Card design</label><div className="design-picker is-small">{CARD_STYLES.map((style) => <button type="button" key={style.id} className={(item.cardStyle || "classic") === style.id ? "on" : ""} onClick={() => updatePlayer(item.id, { cardStyle: style.id })}><img src={style.src} alt="" /><span>{style.name}</span></button>)}</div><label>Player photo</label><div className="photo-edit-row"><label className="b line sm photo-button">{item.image ? "Change photo" : "Add photo"}<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { updatePlayer(item.id, { image: await preparePlayerImage(file) }); } catch (reason) { window.alert(reason instanceof Error ? reason.message : "Could not add that image."); } e.target.value = ""; }} /></label>{item.image && <button className="b line sm" onClick={() => updatePlayer(item.id, { image: "" })}>Remove photo</button>}</div></div>}
+          {unlocked && editId === item.id && <div className="edit-block card-editor"><label htmlFor={`player-name-${item.id}`}>Player name</label><input id={`player-name-${item.id}`} defaultValue={item.name} maxLength={60} autoComplete="off" onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} onBlur={(event) => { const name = event.currentTarget.value.trim(); if (!name) { event.currentTarget.value = item.name; window.alert("Player name cannot be empty."); return; } if (name !== item.name) updatePlayer(item.id, { name }); }} /><label>Rating, 0.5–10</label><RatingPicker value={item.rating} onChange={(rating) => updatePlayer(item.id, { rating })} /><label>Speciality</label><div className="cl edit-specialities">{SPECIALITIES.map((spec) => <button key={spec} onClick={() => updatePlayer(item.id, { spec })} className={item.spec === spec ? "on" : ""}>{spec}</button>)}</div><div className="player-details-row"><div><label>Position</label><select value={defaultPosition(item)} onChange={(e) => updatePlayer(item.id, { position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label>Flag or country code</label><input value={item.flag || "🇵🇰"} maxLength={8} onChange={(e) => updatePlayer(item.id, { flag: e.target.value })} onBlur={(e) => updatePlayer(item.id, { flag: flagEmoji(e.currentTarget.value) })} placeholder="🇵🇰 or PK" /></div></div><label>Card design</label><div className="design-picker is-small">{CARD_STYLES.map((style) => <button type="button" key={style.id} className={(item.cardStyle || "classic") === style.id ? "on" : ""} onClick={() => updatePlayer(item.id, { cardStyle: style.id })}><img src={style.src} alt="" /><span>{style.name}</span></button>)}</div><label>Player photo</label><div className="photo-edit-row"><label className="b line sm photo-button">{item.image ? "Change photo" : "Add photo"}<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { updatePlayer(item.id, { image: await preparePlayerImage(file) }); } catch (reason) { window.alert(reason instanceof Error ? reason.message : "Could not add that image."); } e.target.value = ""; }} /></label>{item.image && <button className="b line sm" onClick={() => updatePlayer(item.id, { image: "" })}>Remove photo</button>}</div></div>}
         </div>)}</div> : <div className="empty">No players yet.</div>}
       </div>
     </>;

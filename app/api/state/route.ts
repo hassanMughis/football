@@ -61,7 +61,7 @@ function flagEmoji(value: unknown) {
 }
 
 function generatedStats(player: JsonObject) {
-  const rating = Math.max(0, Math.min(10, Math.round(numberValue(player.rating))));
+  const rating = Math.max(0, Math.min(10, Math.round(numberValue(player.rating) * 2) / 2));
   const speciality = typeof player.spec === "string" ? player.spec : "";
   if (!rating) return { OVR: null, PAC: null, SHO: null, PAS: null, DRI: null, DEF: null, PHY: null };
   const base = 44 + rating * 5;
@@ -79,7 +79,7 @@ function generatedStats(player: JsonObject) {
     return 0;
   };
   const offsets = { PAC: 1, SHO: -1, PAS: 0, DRI: 2, DEF: -8, PHY: -3 } as const;
-  const stats = Object.fromEntries(statNames.map((label) => [label, Math.max(1, Math.min(99, base + offsets[label] + boost(label)))])) as Record<typeof statNames[number], number>;
+  const stats = Object.fromEntries(statNames.map((label) => [label, Math.round(Math.max(1, Math.min(99, base + offsets[label] + boost(label))))])) as Record<typeof statNames[number], number>;
   return { OVR: Math.round(statNames.reduce((sum, label) => sum + stats[label], 0) / statNames.length), ...stats };
 }
 
@@ -94,7 +94,7 @@ function validateAndEnrichState(value: unknown) {
     const rating = numberValue(candidate.rating);
     if (!id || id.length > 80 || ids.has(id)) throw new Error("Every player needs a unique ID.");
     if (!name || name.length > 60) throw new Error("Player names must be between 1 and 60 characters.");
-    if (!Number.isInteger(rating) || rating < 0 || rating > 10) throw new Error("Player ratings must be between 0 and 10.");
+    if (rating < 0 || rating > 10 || Math.abs(rating * 2 - Math.round(rating * 2)) > Number.EPSILON) throw new Error("Player ratings must be between 0 and 10 in half-point steps.");
     const spec = specialities.has(String(candidate.spec || "")) ? String(candidate.spec || "") : "";
     const defaultPosition = ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" } as Record<string, string>)[spec] || "CM";
     const position = positions.has(String(candidate.position || "")) ? String(candidate.position) : defaultPosition;
