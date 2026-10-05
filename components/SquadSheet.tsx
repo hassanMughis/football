@@ -493,6 +493,7 @@ export default function SquadSheet() {
   const [openRosterCardId, setOpenRosterCardId] = useState("");
   const [formationTeam, setFormationTeam] = useState<1 | 2>(1);
   const [formationPlayerId, setFormationPlayerId] = useState("");
+  const [draggedFormationId, setDraggedFormationId] = useState("");
   const [editId, setEditId] = useState("");
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
@@ -647,23 +648,45 @@ export default function SquadSheet() {
     const selectedPlayer = selected.ids.includes(formationPlayerId) ? player(formationPlayerId) : undefined;
     const rowFor = (position: string) => ["ST", "CF"].includes(position) ? 12 : ["LW", "CAM", "RW"].includes(position) ? 31 : ["LM", "CM", "CDM", "RM"].includes(position) ? 50 : ["LB", "CB", "RB"].includes(position) ? 70 : position === "GK" ? 88 : 50;
     const fixedX = (position: string) => ({ LW: 13, LM: 11, LB: 11, RW: 87, RM: 89, RB: 89 } as Record<string, number>)[position];
+    const placeItems = (items: Array<{ id: string; position: string }>) => {
+      const result: Array<{ id: string; position: string; x: number; y: number }> = [];
+      for (const y of [12, 31, 50, 70, 88]) {
+        const row = items.filter((item) => rowFor(item.position) === y);
+        const central = row.filter((item) => fixedX(item.position) === undefined);
+        row.filter((item) => fixedX(item.position) !== undefined).forEach((item) => result.push({ ...item, x: fixedX(item.position), y }));
+        const leftOccupied = row.some((item) => (fixedX(item.position) || 50) < 50);
+        const rightOccupied = row.some((item) => (fixedX(item.position) || 50) > 50);
+        const minimum = leftOccupied ? 34 : central.length > 1 ? 34 : 50;
+        const maximum = rightOccupied ? 66 : central.length > 1 ? 66 : 50;
+        central.forEach((item, index) => result.push({ ...item, x: central.length === 1 ? 50 : minimum + (maximum - minimum) * index / (central.length - 1), y }));
+      }
+      return result;
+    };
     const positioned = selected.ids.map((id) => ({ id, position: selected.positions[id] || defaultPosition(player(id) || { id, name: "Player", rating: 0, spec: "" }) }));
-    const placements: Array<{ id: string; x: number; y: number }> = [];
-    for (const y of [12, 31, 50, 70, 88]) {
-      const row = positioned.filter((item) => rowFor(item.position) === y);
-      const central = row.filter((item) => fixedX(item.position) === undefined);
-      row.filter((item) => fixedX(item.position) !== undefined).forEach((item) => placements.push({ id: item.id, x: fixedX(item.position), y }));
-      const leftOccupied = row.some((item) => (fixedX(item.position) || 50) < 50);
-      const rightOccupied = row.some((item) => (fixedX(item.position) || 50) > 50);
-      const minimum = leftOccupied ? 34 : central.length > 1 ? 34 : 50;
-      const maximum = rightOccupied ? 66 : central.length > 1 ? 66 : 50;
-      central.forEach((item, index) => placements.push({ id: item.id, x: central.length === 1 ? 50 : minimum + (maximum - minimum) * index / (central.length - 1), y }));
-    }
+    const placements = placeItems(positioned);
+    const positionUse = new Map<string, number>();
+    const slotItems = formationSlots(selected.ids.length).map((position) => { const occurrence = positionUse.get(position) || 0; positionUse.set(position, occurrence + 1); return { id: `slot-${position}-${occurrence}`, position, occurrence }; });
+    const slotPlacements = placeItems(slotItems).map((slot) => ({ ...slot, occurrence: Number(slot.id.split("-").at(-1) || 0), occupantId: selected.ids.filter((id) => (selected.positions[id] || defaultPosition(player(id)!)) === slot.position)[Number(slot.id.split("-").at(-1) || 0)] || "" }));
+    const moveFormationPlayer = (id: string, position: string, occupantId = "") => {
+      if (!id || !selected.ids.includes(id)) return;
+      setState((current) => {
+        if (!current.balancedTeams) return current;
+        const key = formationTeam === 1 ? "team1" : "team2";
+        const team = current.balancedTeams[key];
+        const previous = team.positions[id] || defaultPosition(current.players.find((item) => item.id === id)!);
+        if (occupantId === id || (!occupantId && previous === position)) return current;
+        const positions = { ...team.positions, [id]: position };
+        if (occupantId && occupantId !== id) positions[occupantId] = previous;
+        return { ...current, balancedTeams: { ...current.balancedTeams, cost: -1, [key]: { ...team, positions } } };
+      });
+      setFormationPlayerId(id);
+      setDraggedFormationId("");
+    };
     const miniCard = ({ id, x, y }: { id: string; x: number; y: number }) => {
       const item = player(id); if (!item) return null;
       const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
       const assignedPosition = selected.positions[id] || defaultPosition(item);
-      return <button type="button" className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onClick={() => setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
+      return <button type="button" draggable className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}${draggedFormationId === id ? " is-dragging" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onDragStart={(event) => { setDraggedFormationId(id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", id); }} onDragEnd={() => setDraggedFormationId("")} onDragOver={(event) => { if (draggedFormationId && draggedFormationId !== id) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, assignedPosition, id); }} onClick={() => draggedFormationId && draggedFormationId !== id ? moveFormationPlayer(draggedFormationId, assignedPosition, id) : setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
         <img className="formation-mini-frame" src={item.image ? design.cleanSrc : design.src} alt="" />
         {item.image && <img className="formation-mini-photo" src={item.image} alt="" />}
         <span className="formation-mini-position">{assignedPosition}</span>
@@ -672,9 +695,9 @@ export default function SquadSheet() {
       </button>;
     };
     return <section className="formation-board">
-      <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {selected.ids.length} players · {formationLabel(selected.positions)}</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
-      <div className={`formation-stage${selectedPlayer ? " has-selection" : ""}`}><div className="formation-pitch"><span className="pitch-box pitch-box-top" /><span className="pitch-box pitch-box-bottom" />{placements.map(miniCard)}</div>
-      {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><button className="b line sm" onClick={() => setFormationPlayerId("")}>Close</button></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: selected.positions[selectedPlayer.id] })}</aside>}</div>
+      <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {selected.ids.length} players · {formationLabel(selected.positions)} · Drag cards to swap positions</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
+      <div className={`formation-stage${selectedPlayer ? " has-selection" : ""}`}><div className={`formation-pitch${draggedFormationId ? " is-moving" : ""}`}><span className="pitch-box pitch-box-top" /><span className="pitch-box pitch-box-bottom" />{slotPlacements.map((slot) => <button type="button" className="formation-slot" style={{ "--formation-x": `${slot.x}%`, "--formation-y": `${slot.y}%` } as React.CSSProperties} key={slot.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, slot.position, slot.occupantId); }} onClick={() => draggedFormationId && moveFormationPlayer(draggedFormationId, slot.position, slot.occupantId)} aria-label={`Move selected player to ${slot.position}`}><span>{slot.position}</span></button>)}{placements.map(miniCard)}</div>
+      {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><div className="formation-move-actions"><button className={`b sm ${draggedFormationId === selectedPlayer.id ? "pri" : "line"}`} onClick={() => setDraggedFormationId(draggedFormationId === selectedPlayer.id ? "" : selectedPlayer.id)}>{draggedFormationId === selectedPlayer.id ? "Cancel move" : "Move"}</button><button className="b line sm" onClick={() => { setFormationPlayerId(""); setDraggedFormationId(""); }}>Close</button></div></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: selected.positions[selectedPlayer.id] })}</aside>}</div>
     </section>;
   }
 
