@@ -32,8 +32,9 @@ create policy "public settings read" on public.squad_settings for select to anon
 create policy "public settings write" on public.squad_settings for all to anon using (true) with check (true);
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('player-images', 'player-images', true, 5242880, array['image/jpeg','image/png','image/webp','image/gif'])
-on conflict (id) do update set public = true;
+values ('player-images', 'player-images', true, 5242880, array['image/jpeg','image/png','image/webp','image/gif','application/json'])
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "public player images read" on storage.objects;
 drop policy if exists "public player images upload" on storage.objects;

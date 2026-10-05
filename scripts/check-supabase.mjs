@@ -18,3 +18,22 @@ for (const path of ["players?select=id&limit=1", "squad_settings?select=id&limit
   console.log(JSON.stringify({ resource: path.split("?")[0], status: response.status, result }));
   if (!response.ok) process.exitCode = 1;
 }
+
+const probePath = `player-images/squad-sheet/connection-check-${Date.now()}.json`;
+const upload = await fetch(`${url}/storage/v1/object/${probePath}`, {
+  method: "POST",
+  headers: { apikey: key, "content-type": "image/png", "x-upsert": "true" },
+  body: JSON.stringify({ checked: true }),
+});
+console.log(JSON.stringify({ resource: "storage", action: "write", status: upload.status, ok: upload.ok }));
+if (!upload.ok) {
+  console.error(await upload.text());
+  process.exitCode = 1;
+} else {
+  const cleanup = await fetch(`${url}/storage/v1/object/${probePath}`, {
+    method: "DELETE",
+    headers: { apikey: key },
+  });
+  console.log(JSON.stringify({ resource: "storage", action: "cleanup", status: cleanup.status, ok: cleanup.ok }));
+  if (!cleanup.ok) process.exitCode = 1;
+}

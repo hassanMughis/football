@@ -3,6 +3,7 @@
 /out
 .DS_Store
 *.log
+*.tsbuildinfo
 .env*.local
 /.backups/
 /.env*

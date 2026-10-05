@@ -46,7 +46,10 @@ export async function PUT(request: Request) {
       method: "POST",
       headers: {
         apikey: config.key,
-        "content-type": "application/json",
+        // This bucket is also used for player photos and its existing MIME
+        // allow-list only permits images. Storage objects are opaque bytes, so
+        // use an allowed type while keeping the body/path as JSON.
+        "content-type": "image/png",
         "x-upsert": "true",
       },
       body: JSON.stringify(state),
