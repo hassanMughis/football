@@ -19,7 +19,8 @@ type CardStyleId = typeof CARD_STYLES[number]["id"];
 type Player = { id: string; name: string; rating: number; spec: string; image?: string; cardStyle?: CardStyleId; position?: string; flag?: string; on?: boolean };
 type Goal = { s: string; a: string; m: number | null; team?: 1 | 2 };
 type Team = { ids: string[]; captain: string };
-type BalancedTeam = { name: string; ids: string[]; captain: string };
+type LineupPositions = Record<string, string>;
+type BalancedTeam = { name: string; ids: string[]; captain: string; positions: LineupPositions };
 type BalancedTeams = {
   team1: BalancedTeam;
   team2: BalancedTeam;
@@ -30,8 +31,8 @@ type Match = { opp: string; us: string; them: number; ev: Goal[]; motm: string; 
 type MatchHistoryEntry = {
   id: string;
   endedAt: string;
-  team1: { name: string; captain: string; players: Array<{ id: string; name: string }> };
-  team2: { name: string; captain: string; players: Array<{ id: string; name: string }> };
+  team1: { name: string; captain: string; players: Array<{ id: string; name: string; position: string }> };
+  team2: { name: string; captain: string; players: Array<{ id: string; name: string; position: string }> };
   score1: number;
   score2: number;
   goals: Goal[];
@@ -87,7 +88,7 @@ const restoreState = (value: unknown): AppState => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return base;
   const parsed = value as Partial<AppState>;
   const hasSavedPlayers = Array.isArray(parsed.players);
-  const players = (hasSavedPlayers ? parsed.players || [] : base.players)
+  const players: Player[] = (hasSavedPlayers ? parsed.players || [] : base.players)
     .filter((item): item is Player => Boolean(item && typeof item.name === "string" && (typeof item.id === "string" || typeof item.id === "number")))
     .map((item) => {
       const legacy = item as Player & { id: string | number; available?: boolean; imageUrl?: string | null };
@@ -111,19 +112,24 @@ const restoreState = (value: unknown): AppState => {
   const savedBalance = parsed.balancedTeams;
   const balancedTeams = savedBalance && Array.isArray(savedBalance.team1?.ids) && Array.isArray(savedBalance.team2?.ids)
     ? {
-      team1: { name: savedBalance.team1.name || "Team 1", ids: savedBalance.team1.ids.map(String).filter((id) => playerIds.has(id)), captain: String(savedBalance.team1.captain || savedBalance.team1.ids[0] || "") },
-      team2: { name: savedBalance.team2.name || "Team 2", ids: savedBalance.team2.ids.map(String).filter((id) => playerIds.has(id)), captain: String(savedBalance.team2.captain || savedBalance.team2.ids[0] || "") },
+      team1: { name: savedBalance.team1.name || "Team 1", ids: savedBalance.team1.ids.map(String).filter((id) => playerIds.has(id)), captain: String(savedBalance.team1.captain || savedBalance.team1.ids[0] || ""), positions: savedBalance.team1.positions && typeof savedBalance.team1.positions === "object" ? savedBalance.team1.positions : {} },
+      team2: { name: savedBalance.team2.name || "Team 2", ids: savedBalance.team2.ids.map(String).filter((id) => playerIds.has(id)), captain: String(savedBalance.team2.captain || savedBalance.team2.ids[0] || ""), positions: savedBalance.team2.positions && typeof savedBalance.team2.positions === "object" ? savedBalance.team2.positions : {} },
       seed: Number(savedBalance.seed) || 0,
       cost: Number(savedBalance.cost) || 0,
     }
     : null;
+  const normalizedBalancedTeams = balancedTeams ? {
+    ...balancedTeams,
+    team1: { ...balancedTeams.team1, positions: normalizeLineupPositions(balancedTeams.team1.ids.map((id) => players.find((item) => item.id === id)).filter((item): item is Player => Boolean(item)), balancedTeams.team1.positions) },
+    team2: { ...balancedTeams.team2, positions: normalizeLineupPositions(balancedTeams.team2.ids.map((id) => players.find((item) => item.id === id)).filter((item): item is Player => Boolean(item)), balancedTeams.team2.positions) },
+  } : null;
   return {
     ...base,
     ...parsed,
     players,
     want: Number.isFinite(Number(parsed.want)) ? Math.max(0, Number(parsed.want)) : 0,
     team: savedTeam?.ids.length ? { ...savedTeam, captain: playerIds.has(savedTeam.captain) ? savedTeam.captain : savedTeam.ids[0] } : null,
-    balancedTeams,
+    balancedTeams: normalizedBalancedTeams,
     pool: Array.isArray(parsed.pool) ? parsed.pool.filter((item) => item && playerIds.has(String(item.id))).map((item) => players.find((player) => player.id === String(item.id))!).filter(Boolean) : null,
     tab: parsed.tab === "team" || parsed.tab === "players" ? parsed.tab : "match",
     sub: parsed.sub === "lineups" || parsed.sub === "stats" || parsed.sub === "history" || parsed.sub === "edit" ? parsed.sub : "timeline",
@@ -152,8 +158,8 @@ const legacySquadState = (value: unknown): AppState | null => {
     ...initialState(),
     players,
     balancedTeams: team1Ids.length && team2Ids.length ? {
-      team1: { name: legacy.team1Name || "Team 1", ids: team1Ids, captain: team1Ids[0] || "" },
-      team2: { name: legacy.team2Name || "Team 2", ids: team2Ids, captain: team2Ids[0] || "" },
+      team1: { name: legacy.team1Name || "Team 1", ids: team1Ids, captain: team1Ids[0] || "", positions: {} },
+      team2: { name: legacy.team2Name || "Team 2", ids: team2Ids, captain: team2Ids[0] || "", positions: {} },
       seed: 0,
       cost: 0,
     } : null,
@@ -177,6 +183,79 @@ const generatedCardStats = (player: Player) => {
   };
   const value = (label: string, offset: number) => String(Math.max(1, Math.min(99, base + offset + boost(label))));
   return [["PAC", value("PAC", 1)], ["SHO", value("SHO", -1)], ["PAS", value("PAS", 0)], ["DRI", value("DRI", 2)], ["DEF", value("DEF", -8)], ["PHY", value("PHY", -3)]];
+};
+
+const FORMATION_SLOTS: Record<number, string[]> = {
+  1: ["GK"],
+  2: ["GK", "ST"],
+  3: ["GK", "CB", "ST"],
+  4: ["GK", "CB", "CM", "ST"],
+  5: ["GK", "CB", "CM", "LW", "ST"],
+  6: ["GK", "LB", "CB", "RB", "CM", "ST"],
+  7: ["GK", "LB", "CB", "RB", "CM", "LW", "ST"],
+  8: ["GK", "LB", "CB", "RB", "CM", "LW", "RW", "ST"],
+  9: ["GK", "LB", "CB", "CB", "RB", "CM", "LW", "RW", "ST"],
+  10: ["GK", "LB", "CB", "CB", "RB", "CM", "CM", "LW", "RW", "ST"],
+  11: ["GK", "LB", "CB", "CB", "RB", "CDM", "CM", "CAM", "LW", "RW", "ST"],
+};
+
+const formationSlots = (count: number) => {
+  if (count <= 11) return [...(FORMATION_SLOTS[Math.max(1, count)] || [])];
+  const extras = ["CM", "CB", "ST", "LW", "RW"];
+  return [...FORMATION_SLOTS[11], ...Array.from({ length: count - 11 }, (_, index) => extras[index % extras.length])];
+};
+
+const positionFamily = (position: string) => {
+  if (position === "GK") return "goalkeeper";
+  if (["CB", "LB", "RB"].includes(position)) return "defence";
+  if (["CDM", "CM", "CAM", "LM", "RM"].includes(position)) return "midfield";
+  return "attack";
+};
+
+const positionFit = (item: Player, slot: string) => {
+  const preferred = defaultPosition(item);
+  const family = positionFamily(slot);
+  const preferredFamily = positionFamily(preferred);
+  const stats = Object.fromEntries(generatedCardStats(item).map(([label, value]) => [label, Number(value) || 50]));
+  let score = preferred === slot ? 120 : preferredFamily === family ? 62 : 12;
+  if (slot === "GK") score += preferred === "GK" ? 100 : (stats.DEF + stats.PHY) / 12;
+  else if (family === "defence") score += (stats.DEF * 1.4 + stats.PHY + stats.PAC * .35) / 10;
+  else if (family === "midfield") score += (stats.PAS * 1.25 + stats.DRI + stats.PHY * .3) / 10;
+  else score += (stats.SHO * 1.35 + stats.PAC + stats.DRI * .65) / 10;
+  if (item.spec === "Passing" && family === "midfield") score += 20;
+  if ((item.spec === "Scoring" || item.spec === "Shooting") && family === "attack") score += 20;
+  if (item.spec === "Dribbling" && ["LW", "RW", "CAM"].includes(slot)) score += 20;
+  if (item.spec === "Teamwork" && ["CDM", "CM", "CB"].includes(slot)) score += 14;
+  return score;
+};
+
+const assignLineupPositions = (roster: Player[]): LineupPositions => {
+  const remaining = [...roster];
+  const result: LineupPositions = {};
+  for (const slot of formationSlots(roster.length)) {
+    let bestIndex = 0;
+    for (let index = 1; index < remaining.length; index++) {
+      if (positionFit(remaining[index], slot) > positionFit(remaining[bestIndex], slot)) bestIndex = index;
+    }
+    const [picked] = remaining.splice(bestIndex, 1);
+    if (picked) result[picked.id] = slot;
+  }
+  return result;
+};
+
+const normalizeLineupPositions = (roster: Player[], saved: LineupPositions): LineupPositions => {
+  const automatic = assignLineupPositions(roster);
+  const validSaved = Object.fromEntries(Object.entries(saved || {}).filter(([id, position]) => roster.some((item) => item.id === id) && POSITIONS.includes(position as typeof POSITIONS[number])));
+  const merged = { ...automatic, ...validSaved };
+  const counts = Object.values(merged).reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
+  const allowed = formationSlots(roster.length).reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
+  const invalid = (roster.length > 0 && counts.GK !== 1) || Object.entries(counts).some(([position, count]) => count > Math.max(1, allowed[position] || 0));
+  return invalid ? automatic : merged;
+};
+
+const formationLabel = (positions: LineupPositions) => {
+  const counts = Object.values(positions).reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
+  return POSITIONS.filter((position) => counts[position]).map((position) => `${counts[position] && counts[position] > 1 ? `${counts[position]}×` : ""}${position}`).join(" · ");
 };
 
 type BalanceVector = [number, number, number, number, number, number, number];
@@ -516,7 +595,7 @@ export default function SquadSheet() {
     })[0];
   };
 
-  function PlayerCard({ item, children, compact = false }: { item: Player; children?: React.ReactNode; compact?: boolean }) {
+  function PlayerCard({ item, children, compact = false, positionOverride }: { item: Player; children?: React.ReactNode; compact?: boolean; positionOverride?: string }) {
     const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
     const cardStats = generatedCardStats(item);
     const numericStats = cardStats.map(([, value]) => Number(value)).filter(Number.isFinite);
@@ -524,7 +603,7 @@ export default function SquadSheet() {
     return <article className={`player-card${item.on === false ? " is-inactive" : ""}${compact ? " is-compact" : ""}`}>
       <div className={`player-card__visual card-theme-${design.id}`}>
         <img className="player-card__frame" src={item.image ? design.cleanSrc : design.src} alt="" aria-hidden="true" />
-        <div className="player-card__strip"><strong>{overall}</strong><span>{defaultPosition(item)}</span><span className="player-card__flag" aria-label="Country flag">{item.flag || "🇵🇰"}</span><img src="/badges/squad-sheet-fc.png" alt="Squad Sheet FC badge" /></div>
+        <div className="player-card__strip"><strong>{overall}</strong><span>{positionOverride || defaultPosition(item)}</span><span className="player-card__flag" aria-label="Country flag">{item.flag || "🇵🇰"}</span><img src="/badges/squad-sheet-fc.png" alt="Squad Sheet FC badge" /></div>
         <div className="player-card__photo">
           {item.image && <img src={item.image} alt={`${item.name} portrait`} />}
         </div>
@@ -536,18 +615,18 @@ export default function SquadSheet() {
     </article>;
   }
 
-  function RosterRow({ item, captain = false, children }: { item: Player; captain?: boolean; children?: React.ReactNode }) {
+  function RosterRow({ item, captain = false, lineupPosition, children }: { item: Player; captain?: boolean; lineupPosition?: string; children?: React.ReactNode }) {
     const open = openRosterCardId === item.id;
     return <div className={`roster-entry${open ? " is-open" : ""}`}>
       <div className="roster-row">
         <button className="roster-player-button" onClick={() => setOpenRosterCardId(open ? "" : item.id)} aria-expanded={open}>
           <span className="roster-avatar">{item.image ? <img src={item.image} alt="" /> : initials(item.name)}</span>
-          <span className="roster-copy"><strong>{item.name}{captain && <span className="cp"> (C)</span>}</strong><small>{defaultPosition(item)} · {specialityLabel(item)}</small></span>
+          <span className="roster-copy"><strong>{item.name}{captain && <span className="cp"> (C)</span>}</strong><small>{lineupPosition || defaultPosition(item)} · {specialityLabel(item)}</small></span>
           <span className="roster-chevron" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
         </button>
         {children && <div className="roster-actions">{children}</div>}
       </div>
-      {open && <div className="roster-card-preview"><PlayerCard item={item} compact /></div>}
+      {open && <div className="roster-card-preview"><PlayerCard item={item} compact positionOverride={lineupPosition} /></div>}
     </div>;
   }
 
@@ -555,7 +634,8 @@ export default function SquadSheet() {
     return <div className="sec simple-squad"><h2>{title}</h2><div className="roster-list">{ids.map((id) => {
       const item = player(id); if (!item) return null;
       const captain = state.team?.captain === id || state.balancedTeams?.team1.captain === id || state.balancedTeams?.team2.captain === id;
-      return <RosterRow item={item} captain={captain} key={id} />;
+      const lineupPosition = state.balancedTeams?.team1.positions[id] || state.balancedTeams?.team2.positions[id] || defaultPosition(item);
+      return <RosterRow item={item} captain={captain} lineupPosition={lineupPosition} key={id} />;
     })}</div></div>;
   }
 
@@ -615,11 +695,13 @@ export default function SquadSheet() {
       const rosterSeed = rosterBalanceSeed(active);
       const seed = shuffleTeams ? nextBalanceSeed(savedBalance?.seed ?? rosterSeed) : rosterSeed;
       const result = makeBalancedTeams(active, seed, shuffleTeams ? previousBalanceSignature : "", pickCaptain || active[0]?.id, pickCaptainTwo || active[1]?.id);
+      const firstPositions = assignLineupPositions(result.first.map((id) => active.find((item) => item.id === id)).filter((item): item is Player => Boolean(item)));
+      const secondPositions = assignLineupPositions(result.second.map((id) => active.find((item) => item.id === id)).filter((item): item is Player => Boolean(item)));
       setState((current) => ({
         ...current,
         balancedTeams: {
-          team1: { name: current.balancedTeams?.team1.name || "Team 1", ids: result.first, captain: pickCaptain || result.first[0] },
-          team2: { name: current.balancedTeams?.team2.name || "Team 2", ids: result.second, captain: pickCaptainTwo || result.second[0] },
+          team1: { name: current.balancedTeams?.team1.name || "Team 1", ids: result.first, captain: pickCaptain || result.first[0], positions: firstPositions },
+          team2: { name: current.balancedTeams?.team2.name || "Team 2", ids: result.second, captain: pickCaptainTwo || result.second[0], positions: secondPositions },
           seed,
           cost: result.cost,
         },
@@ -726,11 +808,13 @@ export default function SquadSheet() {
       const rosterSeed = rosterBalanceSeed(active);
       const seed = shuffle ? nextBalanceSeed(saved?.seed ?? rosterSeed) : rosterSeed;
       const result = makeBalancedTeams(active, seed, shuffle ? previousSignature : "", captain1, captain2);
+      const firstPositions = assignLineupPositions(result.first.map((id) => active.find((item) => item.id === id)).filter((item): item is Player => Boolean(item)));
+      const secondPositions = assignLineupPositions(result.second.map((id) => active.find((item) => item.id === id)).filter((item): item is Player => Boolean(item)));
       setState((current) => ({
         ...current,
         balancedTeams: {
-          team1: { name: current.balancedTeams?.team1.name || "Team 1", ids: result.first, captain: captain1 },
-          team2: { name: current.balancedTeams?.team2.name || "Team 2", ids: result.second, captain: captain2 },
+          team1: { name: current.balancedTeams?.team1.name || "Team 1", ids: result.first, captain: captain1, positions: firstPositions },
+          team2: { name: current.balancedTeams?.team2.name || "Team 2", ids: result.second, captain: captain2, positions: secondPositions },
           seed,
           cost: result.cost,
         },
@@ -742,8 +826,8 @@ export default function SquadSheet() {
       setState((current) => ({
         ...current,
         balancedTeams: {
-          team1: { name: current.balancedTeams?.team1.name || "Team 1", ids: [captain1], captain: captain1 },
-          team2: { name: current.balancedTeams?.team2.name || "Team 2", ids: [captain2], captain: captain2 },
+          team1: { name: current.balancedTeams?.team1.name || "Team 1", ids: [captain1], captain: captain1, positions: { [captain1]: "GK" } },
+          team2: { name: current.balancedTeams?.team2.name || "Team 2", ids: [captain2], captain: captain2, positions: { [captain2]: "GK" } },
           seed: rosterBalanceSeed(active),
           cost: -1,
         },
@@ -759,15 +843,36 @@ export default function SquadSheet() {
       if (!current.balancedTeams) return current;
       const source = destination === "team1" ? "team2" : "team1";
       if (current.balancedTeams[source].captain === id) return current;
+      const sourceIds = current.balancedTeams[source].ids.filter((playerId) => playerId !== id);
+      const destinationIds = [...new Set([...current.balancedTeams[destination].ids, id])];
+      const positionsFor = (ids: string[]) => assignLineupPositions(ids.map((playerId) => current.players.find((item) => item.id === playerId)).filter((item): item is Player => Boolean(item)));
       return {
         ...current,
         balancedTeams: {
           ...current.balancedTeams,
           cost: -1,
-          [source]: { ...current.balancedTeams[source], ids: current.balancedTeams[source].ids.filter((playerId) => playerId !== id) },
-          [destination]: { ...current.balancedTeams[destination], ids: [...new Set([...current.balancedTeams[destination].ids, id])] },
+          [source]: { ...current.balancedTeams[source], ids: sourceIds, positions: positionsFor(sourceIds) },
+          [destination]: { ...current.balancedTeams[destination], ids: destinationIds, positions: positionsFor(destinationIds) },
         },
       };
+    });
+
+    const updateLineupPosition = (team: "team1" | "team2", id: string, position: string) => setState((current) => {
+      if (!current.balancedTeams || !POSITIONS.includes(position as typeof POSITIONS[number])) return current;
+      const selected = current.balancedTeams[team];
+      const previousPosition = selected.positions[id] || "CM";
+      if (previousPosition === position) return current;
+      const positions = { ...selected.positions };
+      const allowedCount = Math.max(1, formationSlots(selected.ids.length).filter((slot) => slot === position).length);
+      const occupants = selected.ids.filter((playerId) => playerId !== id && positions[playerId] === position);
+      if (occupants.length >= allowedCount) positions[occupants[0]] = previousPosition;
+      else if (previousPosition === "GK" && position !== "GK") {
+        const replacement = selected.ids.filter((playerId) => playerId !== id).map((playerId) => current.players.find((item) => item.id === playerId)).filter((item): item is Player => Boolean(item)).sort((a, b) => positionFit(b, "GK") - positionFit(a, "GK"))[0];
+        if (!replacement) return current;
+        positions[replacement.id] = "GK";
+      }
+      positions[id] = position;
+      return { ...current, balancedTeams: { ...current.balancedTeams, cost: -1, [team]: { ...selected, positions } } };
     });
 
     const deleteTeams = () => {
@@ -802,7 +907,8 @@ export default function SquadSheet() {
         <label htmlFor={`team-name-${number}`}>Team {number} name</label>
         <input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} />
         <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{average !== null ? ` · Avg ${average}/10` : ""}</p>
-        <div className="roster-list">{roster.map((item) => <RosterRow item={item} captain={team.captain === item.id} key={item.id}><span className="chip">{ratingLabel(item)}</span>{team.captain !== item.id && <button className="b line sm" onClick={() => assignPlayer(item.id, other)}>Move</button>}</RosterRow>)}</div>
+        <p className="formation-label">Formation: {formationLabel(team.positions)}</p>
+        <div className="roster-list">{roster.map((item) => <RosterRow item={item} captain={team.captain === item.id} lineupPosition={team.positions[item.id] || defaultPosition(item)} key={item.id}><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select>{team.captain !== item.id && <button className="b line sm" onClick={() => assignPlayer(item.id, other)}>Move</button>}</RosterRow>)}</div>
       </div>;
     };
 
@@ -812,7 +918,7 @@ export default function SquadSheet() {
         {!saved ? <div className="button-row"><button className="b pri" disabled={active.length < 2} onClick={() => generateTeams(false)}>Auto-pick balanced teams</button><button className="b line" disabled={active.length < 2} onClick={startManualPick}>Pick manually</button></div> : <div className="button-row"><button className="b" onClick={() => generateTeams(true)}>Shuffle again</button><button className="b line" onClick={deleteTeams}>Delete generated teams</button></div>}
         {active.some((item) => !item.rating) && <p className="note">Unrated players use the squad average. Add ratings for a more accurate automatic split.</p>}
       </div>
-      {saved && <div className="sec top-rule"><h2>Edit teams</h2><p className="note">Move any non-captain player between the two teams. Captains stay on their selected side.</p><div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>
+      {saved && <div className="sec top-rule"><h2>Edit teams and positions</h2><p className="note">Positions are assigned from a formation sized for each team. Change a position if needed; choosing a full position swaps the players instead of duplicating the whole team. Captains stay on their selected side.</p><div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>
         {unassigned.length > 0 && <div className="unassigned-card"><h2>Players waiting to be picked · {unassigned.length}</h2><div className="roster-list">{unassigned.map((item) => <RosterRow item={item} key={item.id}><button className="b sm" onClick={() => assignPlayer(item.id, "team1")}>Team 1</button><button className="b sm" onClick={() => assignPlayer(item.id, "team2")}>Team 2</button></RosterRow>)}</div></div>}
         <div className="button-row"><button className="b pri" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length} onClick={hostMatch}>Host Team 1 vs Team 2</button></div>{unassigned.length > 0 && <p className="note">Assign every active player before hosting the match.</p>}
       </div>}
@@ -869,7 +975,7 @@ export default function SquadSheet() {
         <div className="history-scorers"><div>{entry.goals.filter((goal) => goal.team !== 2).map((goal, index) => <span key={`h1-${index}`}>{historyPlayer(entry, goal.s)?.name || "Player"}{goal.m !== null ? ` ${goal.m}'` : ""}</span>)}</div><span>⚽</span><div>{entry.goals.filter((goal) => goal.team === 2).map((goal, index) => <span key={`h2-${index}`}>{historyPlayer(entry, goal.s)?.name || "Player"}{goal.m !== null ? ` ${goal.m}'` : ""}</span>)}</div></div>
         <div className="tabs history-tabs">{(["timeline", "lineups", "stats"] as HistoryDetailTab[]).map((tab) => <button key={tab} className={historyDetailTab === tab ? "on" : ""} onClick={() => setHistoryDetailTab(tab)}>{tab}</button>)}</div>
         {historyDetailTab === "timeline" && <div className="history-detail-body">{entry.goals.length ? entry.goals.map((goal, index) => { const side = (goal.team || 1) === 1 ? entry.team1 : entry.team2; return <div className="tl" key={`${entry.id}-goal-${index}`}><div className="mn">{goal.m !== null ? `${goal.m}'` : "⚽"}</div><div className="t"><div>⚽ {historyPlayer(entry, goal.s)?.name || "Player"}</div><small>{side.name}{goal.a ? ` · Assist: ${historyPlayer(entry, goal.a)?.name || "Player"}` : ""}</small></div></div>; }) : <div className="empty">No goals were recorded.</div>}</div>}
-        {historyDetailTab === "lineups" && <div className="history-lineups"><div><h3>{entry.team1.name}</h3>{entry.team1.players.map((item) => <div className="history-player" key={item.id}>{item.name}{item.id === entry.team1.captain && <span>Captain</span>}</div>)}</div><div><h3>{entry.team2.name}</h3>{entry.team2.players.map((item) => <div className="history-player" key={item.id}>{item.name}{item.id === entry.team2.captain && <span>Captain</span>}</div>)}</div></div>}
+        {historyDetailTab === "lineups" && <div className="history-lineups"><div><h3>{entry.team1.name}</h3>{entry.team1.players.map((item) => <div className="history-player" key={item.id}><span className="history-position">{item.position || "—"}</span><span className="history-player-name">{item.name}</span>{item.id === entry.team1.captain && <span>Captain</span>}</div>)}</div><div><h3>{entry.team2.name}</h3>{entry.team2.players.map((item) => <div className="history-player" key={item.id}><span className="history-position">{item.position || "—"}</span><span className="history-player-name">{item.name}</span>{item.id === entry.team2.captain && <span>Captain</span>}</div>)}</div></div>}
         {historyDetailTab === "stats" && <div className="history-detail-body"><div className="sr"><span>{entry.score1}</span><span>Goals</span><span>{entry.score2}</span></div><table><thead><tr><th>Player</th><th>Team</th><th>G</th><th>A</th></tr></thead><tbody>{allPlayers.map((item) => <tr key={`${item.team}-${item.id}`}><td>{item.name}{item.captain && <span className="cp"> (C)</span>}</td><td>{item.team}</td><td>{goalCount(item.id)}</td><td>{assistCount(item.id)}</td></tr>)}</tbody></table>{entry.motm && <p className="history-motm">Player of the match: <strong>{historyPlayer(entry, entry.motm)?.name || "Player"}</strong></p>}</div>}
       </div>;
     };
@@ -884,8 +990,8 @@ export default function SquadSheet() {
     if (!state.team || state.match.st !== "Live") return;
     if (!window.confirm("End this match and save it to history?")) return;
     const second = state.balancedTeams?.team2;
-    const firstPlayers = state.team.ids.map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name }));
-    const secondPlayers = (second?.ids || []).map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name }));
+    const firstPlayers = state.team.ids.map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name, position: state.balancedTeams?.team1.positions[item.id] || defaultPosition(item) }));
+    const secondPlayers = (second?.ids || []).map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name, position: second?.positions[item.id] || defaultPosition(item) }));
     const entry: MatchHistoryEntry = {
       id: `m${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
       endedAt: new Date().toISOString(),

@@ -42,6 +42,7 @@ type SettingsRow = {
 };
 type EventRow = { scorer_client_id: string; assist_client_id: string | null; minute: number | null; team_number: number };
 type HistoryRow = { snapshot: unknown };
+type LineupPositionRow = { client_id: string; lineup_position: string | null };
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -130,10 +131,11 @@ async function readDatabaseState() {
   const settings = (await settingsResponse.json() as SettingsRow[])[0];
   if (!settings || !isJsonObject(settings.app_state) || !Object.keys(settings.app_state).length) return null;
 
-  // These two fields were added by the latest migration. Until it is rerun,
+  // These fields were added by the latest migration. Until it is rerun,
   // app_state remains the canonical copy so saves never appear to disappear.
   let events: EventRow[] | null = null;
   let historyRows: HistoryRow[] = [];
+  let lineupPositions = new Map<string, string>();
   try {
     const response = await supabaseRest("match_events?select=scorer_client_id,assist_client_id,minute,team_number&order=event_order.asc,id.asc");
     events = await response.json() as EventRow[];
@@ -142,6 +144,11 @@ async function readDatabaseState() {
     const response = await supabaseRest("match_history?select=snapshot&order=ended_at.desc");
     historyRows = await response.json() as HistoryRow[];
   } catch { /* Preserve history from app_state until the history table exists. */ }
+  try {
+    const response = await supabaseRest("players?select=client_id,lineup_position");
+    const positionRows = await response.json() as LineupPositionRow[];
+    lineupPositions = new Map(positionRows.filter((row) => row.lineup_position).map((row) => [row.client_id, row.lineup_position!]));
+  } catch { /* Preserve generated lineup positions from app_state on older schemas. */ }
 
   const base = settings.app_state;
   const players = rows.map((row) => ({
@@ -163,8 +170,12 @@ async function readDatabaseState() {
   const baseMatch = isJsonObject(base.match) ? base.match : {};
   const baseTeam1 = isJsonObject(baseBalance.team1) ? baseBalance.team1 : {};
   const baseTeam2 = isJsonObject(baseBalance.team2) ? baseBalance.team2 : {};
+  const basePositions1 = isJsonObject(baseTeam1.positions) ? baseTeam1.positions : {};
+  const basePositions2 = isJsonObject(baseTeam2.positions) ? baseTeam2.positions : {};
   const captain1 = rows.find((row) => row.team === 1 && row.is_captain)?.client_id || String(baseTeam1.captain || matchIds[0] || "");
   const captain2 = rows.find((row) => row.team === 2 && row.is_captain)?.client_id || String(baseTeam2.captain || secondIds[0] || "");
+  const positions1 = Object.fromEntries(rows.filter((row) => row.team === 1).map((row) => [row.client_id, lineupPositions.get(row.client_id) || (typeof basePositions1[row.client_id] === "string" ? String(basePositions1[row.client_id]) : "")]).filter((entry) => entry[1]));
+  const positions2 = Object.fromEntries(rows.filter((row) => row.team === 2).map((row) => [row.client_id, lineupPositions.get(row.client_id) || (typeof basePositions2[row.client_id] === "string" ? String(basePositions2[row.client_id]) : "")]).filter((entry) => entry[1]));
   return {
     ...base,
     players,
@@ -172,8 +183,8 @@ async function readDatabaseState() {
     team: matchIds.length ? { ids: matchIds, captain: captain1 } : null,
     balancedTeams: firstIds.length || secondIds.length ? {
       ...baseBalance,
-      team1: { name: settings.team_1_name, ids: firstIds, captain: captain1 },
-      team2: { name: settings.team_2_name, ids: secondIds, captain: captain2 },
+      team1: { name: settings.team_1_name, ids: firstIds, captain: captain1, positions: positions1 },
+      team2: { name: settings.team_2_name, ids: secondIds, captain: captain2, positions: positions2 },
     } : null,
     match: {
       ...baseMatch,

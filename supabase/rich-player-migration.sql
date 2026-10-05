@@ -1,4 +1,4 @@
--- Run this entire file once in the Supabase SQL Editor.
+-- Run or re-run this entire file in the Supabase SQL Editor after each schema update.
 -- It upgrades the existing basic roster without deleting current players.
 
 begin;
@@ -7,6 +7,7 @@ alter table public.players add column if not exists client_id text;
 alter table public.players add column if not exists speciality text not null default '';
 alter table public.players add column if not exists card_style text not null default 'classic';
 alter table public.players add column if not exists position text not null default 'CM';
+alter table public.players add column if not exists lineup_position text;
 alter table public.players add column if not exists flag text not null default '🇵🇰';
 alter table public.players add column if not exists overall integer;
 alter table public.players add column if not exists pac integer;
@@ -43,6 +44,9 @@ do $$ begin
   end if;
   if not exists (select 1 from pg_constraint where conname = 'players_position_check' and conrelid = 'public.players'::regclass) then
     alter table public.players add constraint players_position_check check (position in ('GK', 'CB', 'LB', 'RB', 'CDM', 'CM', 'CAM', 'LM', 'RM', 'LW', 'RW', 'CF', 'ST'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'players_lineup_position_check' and conrelid = 'public.players'::regclass) then
+    alter table public.players add constraint players_lineup_position_check check (lineup_position is null or lineup_position in ('GK', 'CB', 'LB', 'RB', 'CDM', 'CM', 'CAM', 'LM', 'RM', 'LW', 'RW', 'CF', 'ST'));
   end if;
   if not exists (select 1 from pg_constraint where conname = 'players_overall_check' and conrelid = 'public.players'::regclass) then
     alter table public.players add constraint players_overall_check check (overall is null or overall between 1 and 99);
@@ -163,7 +167,7 @@ begin
     if length(btrim(item->>'name')) not between 1 and 60 then raise exception 'Invalid player name'; end if;
 
     insert into public.players (
-      client_id, name, rating, speciality, image_url, card_style, position, flag,
+      client_id, name, rating, speciality, image_url, card_style, position, lineup_position, flag,
       available, team, in_match_squad, is_captain, overall, pac, sho, pas, dri, def, phy, sort_order
     ) values (
       player_id,
@@ -173,6 +177,10 @@ begin
       nullif(item->>'image', ''),
       coalesce(nullif(item->>'cardStyle', ''), 'classic'),
       coalesce(nullif(item->>'position', ''), 'CM'),
+      nullif(coalesce(
+        p_state #>> array['balancedTeams','team1','positions',player_id],
+        p_state #>> array['balancedTeams','team2','positions',player_id]
+      ), ''),
       coalesce(nullif(item->>'flag', ''), '🇵🇰'),
       case when item ? 'on' then coalesce((item->>'on')::boolean, true) else true end,
       case
@@ -196,6 +204,7 @@ begin
     on conflict (client_id) do update set
       name = excluded.name, rating = excluded.rating, speciality = excluded.speciality,
       image_url = excluded.image_url, card_style = excluded.card_style, position = excluded.position,
+      lineup_position = excluded.lineup_position,
       flag = excluded.flag, available = excluded.available, team = excluded.team,
       in_match_squad = excluded.in_match_squad, is_captain = excluded.is_captain,
       overall = excluded.overall, pac = excluded.pac, sho = excluded.sho, pas = excluded.pas,
