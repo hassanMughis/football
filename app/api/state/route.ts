@@ -1,4 +1,5 @@
 import { getSupabaseConfig, supabaseRest } from "@/lib/supabase-rest";
+import { isAdmin } from "@/lib/admin-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -211,6 +212,7 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  if (!await isAdmin()) return Response.json({ error: "Admin login required." }, { status: 401 });
   try {
     const state = validateAndEnrichState(await request.json());
     try {

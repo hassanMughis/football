@@ -1,8 +1,10 @@
 import { getSupabaseConfig } from "@/lib/supabase-rest";
+import { isAdmin } from "@/lib/admin-auth";
 
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 export async function POST(request: Request) {
+  if (!await isAdmin()) return Response.json({ error: "Admin login required." }, { status: 401 });
   try {
     const form = await request.formData();
     const file = form.get("file");

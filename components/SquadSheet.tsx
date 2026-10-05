@@ -500,18 +500,24 @@ export default function SquadSheet() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
   const [accessChecked, setAccessChecked] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const hydrated = useRef(false);
   const saveSequence = useRef(0);
 
   useEffect(() => {
-    try { setUnlocked(sessionStorage.getItem("squad-sheet-unlocked") === "yes"); } catch { /* Session storage can be unavailable. */ }
-    setAccessChecked(true);
+    let cancelled = false;
+    fetch("/api/auth", { cache: "no-store" })
+      .then(async (response) => response.ok ? response.json() as Promise<{ authenticated?: boolean }> : { authenticated: false })
+      .then((result) => { if (!cancelled) setUnlocked(Boolean(result.authenticated)); })
+      .catch(() => { if (!cancelled) setUnlocked(false); })
+      .finally(() => { if (!cancelled) setAccessChecked(true); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (!unlocked) return;
+    if (!accessChecked) return;
     let cancelled = false;
     setSyncStatus("loading");
     const load = async () => {
@@ -539,7 +545,7 @@ export default function SquadSheet() {
 
       const remoteTime = remoteValue && typeof remoteValue === "object" ? Number((remoteValue as { savedAt?: number }).savedAt) || 0 : 0;
       const localTime = localValue && typeof localValue === "object" ? Number((localValue as { savedAt?: number }).savedAt) || 0 : 0;
-      const savedValue = remoteValue && (!localValue || remoteTime >= localTime) ? remoteValue : localValue;
+      const savedValue = remoteValue && (!unlocked || !localValue || remoteTime >= localTime) ? remoteValue : localValue;
       const restored = savedValue ? restoreState(savedValue) : legacySquadState(legacyValue) || initialState();
       if (cancelled) return;
       hydrated.current = true;
@@ -548,7 +554,7 @@ export default function SquadSheet() {
     };
     void load();
     return () => { cancelled = true; };
-  }, [unlocked]);
+  }, [accessChecked]);
 
   useEffect(() => {
     if (!unlocked || !hydrated.current) return;
@@ -571,6 +577,23 @@ export default function SquadSheet() {
     }, 650);
     return () => window.clearTimeout(timeout);
   }, [state, unlocked]);
+
+  useEffect(() => {
+    if (!accessChecked || unlocked) return;
+    const refreshPublicView = async () => {
+      try {
+        const response = await fetch("/api/state", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json() as { state?: unknown };
+        if (!payload.state) return;
+        const refreshed = restoreState(payload.state);
+        setState((current) => ({ ...refreshed, tab: current.tab, sub: current.sub }));
+        setSyncStatus("saved");
+      } catch { /* Keep showing the last loaded public state while temporarily offline. */ }
+    };
+    const interval = window.setInterval(() => void refreshPublicView(), 15000);
+    return () => window.clearInterval(interval);
+  }, [accessChecked, unlocked]);
 
   const active = useMemo(() => state.players.filter((player) => player.on !== false), [state.players]);
   const teamSize = state.want ? Math.min(state.want, active.length) : active.length;
@@ -673,7 +696,7 @@ export default function SquadSheet() {
       ...placeItems(positioned.filter((item) => !occupiedSlotIds.has(item.id))),
     ];
     const moveFormationPlayer = (id: string, position: string, occupantId = "") => {
-      if (!id || !selected.ids.includes(id)) return;
+      if (!unlocked || !id || !selected.ids.includes(id)) return;
       setState((current) => {
         if (!current.balancedTeams) return current;
         const key = formationTeam === 1 ? "team1" : "team2";
@@ -691,7 +714,7 @@ export default function SquadSheet() {
       const item = player(id); if (!item) return null;
       const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
       const assignedPosition = selected.positions[id] || defaultPosition(item);
-      return <button type="button" draggable className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}${draggedFormationId === id ? " is-dragging" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onDragStart={(event) => { setDraggedFormationId(id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", id); }} onDragEnd={() => setDraggedFormationId("")} onDragOver={(event) => { if (draggedFormationId && draggedFormationId !== id) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, assignedPosition, id); }} onClick={() => draggedFormationId && draggedFormationId !== id ? moveFormationPlayer(draggedFormationId, assignedPosition, id) : setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
+      return <button type="button" draggable={unlocked} className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}${draggedFormationId === id ? " is-dragging" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onDragStart={(event) => { if (!unlocked) return; setDraggedFormationId(id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", id); }} onDragEnd={() => setDraggedFormationId("")} onDragOver={(event) => { if (unlocked && draggedFormationId && draggedFormationId !== id) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, assignedPosition, id); }} onClick={() => unlocked && draggedFormationId && draggedFormationId !== id ? moveFormationPlayer(draggedFormationId, assignedPosition, id) : setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
         <img className="formation-mini-frame" src={item.image ? design.cleanSrc : design.src} alt="" />
         {item.image && <img className="formation-mini-photo" src={item.image} alt="" />}
         <span className="formation-mini-position">{assignedPosition}</span>
@@ -700,9 +723,9 @@ export default function SquadSheet() {
       </button>;
     };
     return <section className="formation-board">
-      <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {selected.ids.length}/11 positions filled · Empty positions remain available · Drag cards to move or swap</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
+      <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {selected.ids.length}/11 positions filled · {unlocked ? "Drag cards to move or swap" : "Select a card to view player details"}</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
       <div className={`formation-stage${selectedPlayer ? " has-selection" : ""}`}><div className={`formation-pitch${draggedFormationId ? " is-moving" : ""}`}><span className="pitch-box pitch-box-top" /><span className="pitch-box pitch-box-bottom" />{slotPlacements.map((slot) => <button type="button" className="formation-slot" style={{ "--formation-x": `${slot.x}%`, "--formation-y": `${slot.y}%` } as React.CSSProperties} key={slot.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, slot.position, slot.occupantId); }} onClick={() => draggedFormationId && moveFormationPlayer(draggedFormationId, slot.position, slot.occupantId)} aria-label={`Move selected player to ${slot.position}`}><span>{slot.position}</span></button>)}{placements.map(miniCard)}</div>
-      {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><div className="formation-move-actions"><button className={`b sm ${draggedFormationId === selectedPlayer.id ? "pri" : "line"}`} onClick={() => setDraggedFormationId(draggedFormationId === selectedPlayer.id ? "" : selectedPlayer.id)}>{draggedFormationId === selectedPlayer.id ? "Cancel move" : "Move"}</button><button className="b line sm" onClick={() => { setFormationPlayerId(""); setDraggedFormationId(""); }}>Close</button></div></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: selected.positions[selectedPlayer.id] })}</aside>}</div>
+      {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><div className="formation-move-actions">{unlocked && <button className={`b sm ${draggedFormationId === selectedPlayer.id ? "pri" : "line"}`} onClick={() => setDraggedFormationId(draggedFormationId === selectedPlayer.id ? "" : selectedPlayer.id)}>{draggedFormationId === selectedPlayer.id ? "Cancel move" : "Move"}</button>}<button className="b line sm" onClick={() => { setFormationPlayerId(""); setDraggedFormationId(""); }}>Close</button></div></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: selected.positions[selectedPlayer.id] })}</aside>}</div>
     </section>;
   }
 
@@ -725,7 +748,7 @@ export default function SquadSheet() {
       return { ...current, balancedTeams: null, players: current.players.filter((item) => item.id !== id), pool: reset ? null : current.pool?.filter((item) => item.id !== id) || null, ...(reset ? { team: null, match: newMatch(current.match) } : {}) };
     });
     return <>
-      <div className="sec"><h2>Add a player</h2>
+      {unlocked && <div className="sec"><h2>Add a player</h2>
         <label htmlFor="pn">Name</label><input id="pn" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Player name" autoComplete="off" />
         <label>Rating, 1–10 stars (optional)</label><div className="cl n">{Array.from({ length: 10 }, (_, i) => i + 1).map((number) => <button key={number} onClick={() => setDraft({ ...draft, rating: number })} className={draft.rating >= number ? "on" : ""} aria-label={`${number} stars`}>{number}</button>)}</div>
         <label>Speciality (optional)</label><div className="cl">{SPECIALITIES.map((spec) => <button key={spec} onClick={() => setDraft({ ...draft, spec })} className={draft.spec === spec ? "on" : ""}>{spec}</button>)}</div>
@@ -733,15 +756,15 @@ export default function SquadSheet() {
         <label>Card design</label><div className="design-picker">{CARD_STYLES.map((style) => <button type="button" key={style.id} className={draft.cardStyle === style.id ? "on" : ""} onClick={() => setDraft({ ...draft, cardStyle: style.id })}><img src={style.src} alt="" /><span>{style.name}</span></button>)}</div>
         <label>Player photo (optional)</label><div className="photo-field">{draft.image ? <img src={draft.image} alt="New player preview" /> : <div className="mini-silhouette"><span /></div>}<label className="b line photo-button">{draft.image ? "Change photo" : "Add photo"}<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { setDraft({ ...draft, image: await preparePlayerImage(file) }); setError(""); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not add that image."); } e.target.value = ""; }} /></label>{draft.image && <button className="b line sm" onClick={() => setDraft({ ...draft, image: "" })}>Remove</button>}</div>
         <p className="note" aria-live="polite">{error}</p><button className="b pri" onClick={addPlayer}>Add player</button>
-      </div>
-      <div className="sec top-rule"><h2>Squad · {active.length} active of {state.players.length}</h2><p className="note">Tap Active to switch off a player who is not available. Inactive players are skipped when the team is made.</p>
+      </div>}
+      <div className="sec top-rule"><h2>Squad · {active.length} active of {state.players.length}</h2><p className="note">{unlocked ? "Tap Active to switch off a player who is not available. Inactive players are skipped when the team is made." : "View-only player cards. Admin login is required to add, rate or edit players."}</p>
         {state.players.length ? <div className="player-grid">{state.players.map((item) => <div key={item.id} className="player-card-wrap">
-          {PlayerCard({ item, children: <>
+          {PlayerCard({ item, children: unlocked ? <>
             <button className="b sm line" onClick={() => setEditId(editId === item.id ? "" : item.id)}>{editId === item.id ? "Done" : "Rate"}</button>
             <button className={`b sm ${item.on === false ? "line" : ""}`} onClick={() => togglePlayer(item.id)}>{item.on === false ? "Set active" : "Active"}</button>
             <button className="b sm line" onClick={() => deletePlayer(item.id)} aria-label={`Remove ${item.name}`}>✕</button>
-          </> })}
-          {editId === item.id && <div className="edit-block card-editor"><label>Rating</label><div className="cl n">{Array.from({ length: 10 }, (_, i) => i + 1).map((number) => <button key={number} onClick={() => updatePlayer(item.id, { rating: number })} className={item.rating >= number ? "on" : ""}>{number}</button>)}</div><label>Speciality</label><div className="cl edit-specialities">{SPECIALITIES.map((spec) => <button key={spec} onClick={() => updatePlayer(item.id, { spec })} className={item.spec === spec ? "on" : ""}>{spec}</button>)}</div><div className="player-details-row"><div><label>Position</label><select value={defaultPosition(item)} onChange={(e) => updatePlayer(item.id, { position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label>Country flag</label><input value={item.flag || "🇵🇰"} maxLength={8} onChange={(e) => updatePlayer(item.id, { flag: e.target.value })} /></div></div><label>Card design</label><div className="design-picker is-small">{CARD_STYLES.map((style) => <button type="button" key={style.id} className={(item.cardStyle || "classic") === style.id ? "on" : ""} onClick={() => updatePlayer(item.id, { cardStyle: style.id })}><img src={style.src} alt="" /><span>{style.name}</span></button>)}</div><label>Player photo</label><div className="photo-edit-row"><label className="b line sm photo-button">{item.image ? "Change photo" : "Add photo"}<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { updatePlayer(item.id, { image: await preparePlayerImage(file) }); } catch (reason) { window.alert(reason instanceof Error ? reason.message : "Could not add that image."); } e.target.value = ""; }} /></label>{item.image && <button className="b line sm" onClick={() => updatePlayer(item.id, { image: "" })}>Remove photo</button>}</div></div>}
+          </> : undefined })}
+          {unlocked && editId === item.id && <div className="edit-block card-editor"><label>Rating</label><div className="cl n">{Array.from({ length: 10 }, (_, i) => i + 1).map((number) => <button key={number} onClick={() => updatePlayer(item.id, { rating: number })} className={item.rating >= number ? "on" : ""}>{number}</button>)}</div><label>Speciality</label><div className="cl edit-specialities">{SPECIALITIES.map((spec) => <button key={spec} onClick={() => updatePlayer(item.id, { spec })} className={item.spec === spec ? "on" : ""}>{spec}</button>)}</div><div className="player-details-row"><div><label>Position</label><select value={defaultPosition(item)} onChange={(e) => updatePlayer(item.id, { position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label>Country flag</label><input value={item.flag || "🇵🇰"} maxLength={8} onChange={(e) => updatePlayer(item.id, { flag: e.target.value })} /></div></div><label>Card design</label><div className="design-picker is-small">{CARD_STYLES.map((style) => <button type="button" key={style.id} className={(item.cardStyle || "classic") === style.id ? "on" : ""} onClick={() => updatePlayer(item.id, { cardStyle: style.id })}><img src={style.src} alt="" /><span>{style.name}</span></button>)}</div><label>Player photo</label><div className="photo-edit-row"><label className="b line sm photo-button">{item.image ? "Change photo" : "Add photo"}<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { updatePlayer(item.id, { image: await preparePlayerImage(file) }); } catch (reason) { window.alert(reason instanceof Error ? reason.message : "Could not add that image."); } e.target.value = ""; }} /></label>{item.image && <button className="b line sm" onClick={() => updatePlayer(item.id, { image: "" })}>Remove photo</button>}</div></div>}
         </div>)}</div> : <div className="empty">No players yet.</div>}
       </div>
     </>;
@@ -861,6 +884,8 @@ export default function SquadSheet() {
     const captain2 = saved?.team2.captain || pickCaptainTwo;
     const assignedIds = new Set(saved ? [...saved.team1.ids, ...saved.team2.ids] : []);
     const unassigned = sortPlayers(active.filter((item) => !assignedIds.has(item.id)));
+    const draftTeam: "team1" | "team2" = saved && Math.max(0, saved.team1.ids.length + saved.team2.ids.length - 2) % 2 === 1 ? "team2" : "team1";
+    const draftCaptain = saved ? player(saved[draftTeam].captain) : undefined;
     const previousSignature = saved ? [[...saved.team1.ids].sort().join("|"), [...saved.team2.ids].sort().join("|")].sort().join("::") : "";
 
     const captainsReady = () => {
@@ -971,23 +996,24 @@ export default function SquadSheet() {
       const rated = roster.map(numericBalanceVector).filter((value): value is BalanceVector => value !== null);
       const average = rated.length ? Math.round(rated.reduce((sum, values) => sum + values[0], 0) / rated.length * 10) / 10 : null;
       return <div className="card balanced-team-card">
-        <label htmlFor={`team-name-${number}`}>Team {number} name</label>
-        <input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} />
+        {unlocked ? <><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></> : <h3 className="public-team-name">{team.name}</h3>}
         <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{average !== null ? ` · Avg ${average}/10` : ""}</p>
         <p className="formation-label">Formation: {formationLabel(team.positions)}</p>
-        <div className="roster-list">{roster.map((item) => RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), rowKey: item.id, children: <><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select>{team.captain !== item.id && <button className="b line sm" onClick={() => assignPlayer(item.id, other)}>Move</button>}</> }))}</div>
+        <div className="roster-list">{roster.map((item) => RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), rowKey: item.id, children: unlocked ? <><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select>{unassigned.length === 0 && team.captain !== item.id && <button className="b line sm" onClick={() => assignPlayer(item.id, other)}>Move</button>}</> : undefined }))}</div>
       </div>;
     };
 
     return <>
-      <div className="sec"><h2>Set up two teams</h2><p className="note">Choose two captains, then let the app balance every active player or pick the teams manually.</p>
+      {unlocked ? <div className="sec"><h2>Set up two teams</h2><p className="note">Choose two captains, then let the app balance every active player or let the captains draft one player at a time.</p>
         <div className="row2 captain-selects"><div><label htmlFor="captain-one">Team 1 captain</label><select id="captain-one" value={captain1} disabled={Boolean(saved)} onChange={(event) => setPickCaptain(event.target.value)}><option value="">Choose captain…</option>{sortPlayers(active).filter((item) => item.id !== captain2).map((item) => <option value={item.id} key={item.id}>{item.name} ({ratingLabel(item)})</option>)}</select></div><div><label htmlFor="captain-two">Team 2 captain</label><select id="captain-two" value={captain2} disabled={Boolean(saved)} onChange={(event) => setPickCaptainTwo(event.target.value)}><option value="">Choose captain…</option>{sortPlayers(active).filter((item) => item.id !== captain1).map((item) => <option value={item.id} key={item.id}>{item.name} ({ratingLabel(item)})</option>)}</select></div></div>
         {!saved ? <div className="button-row"><button className="b pri" disabled={active.length < 2} onClick={() => generateTeams(false)}>Auto-pick balanced teams</button><button className="b line" disabled={active.length < 2} onClick={startManualPick}>Pick manually</button></div> : <div className="button-row"><button className="b" onClick={() => generateTeams(true)}>Shuffle again</button><button className="b line" onClick={deleteTeams}>Delete generated teams</button></div>}
         {active.some((item) => !item.rating) && <p className="note">Unrated players use the squad average. Add ratings for a more accurate automatic split.</p>}
-      </div>
-      {saved && <div className="sec top-rule"><h2>Edit teams and positions</h2><p className="note">Positions are assigned from a formation sized for each team. Change a position if needed; choosing a full position swaps the players instead of duplicating the whole team. Captains stay on their selected side.</p><div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>{FormationBoard()}
-        {unassigned.length > 0 && <div className="unassigned-card"><h2>Players waiting to be picked · {unassigned.length}</h2><div className="roster-list">{unassigned.map((item) => RosterRow({ item, rowKey: item.id, children: <><button className="b sm" onClick={() => assignPlayer(item.id, "team1")}>Team 1</button><button className="b sm" onClick={() => assignPlayer(item.id, "team2")}>Team 2</button></> }))}</div></div>}
-        <div className="button-row"><button className="b pri" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length} onClick={hostMatch}>Host Team 1 vs Team 2</button></div>{unassigned.length > 0 && <p className="note">Assign every active player before hosting the match.</p>}
+      </div> : !saved && <div className="sec"><h2>No teams yet</h2><p className="empty">An admin can log in and create the next two teams.</p></div>}
+      {saved && <div className="sec top-rule"><h2>{unlocked ? "Edit teams and positions" : "Teams"}</h2><p className="note">{unlocked ? "Positions are assigned automatically and can be changed. Captains stay on their selected side." : "View the current squads, formations and player cards."}</p>
+        {unassigned.length > 0 && <div className="draft-arena" aria-live="polite"><div className={`draft-captain draft-captain-left${draftTeam === "team1" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team1.captain)?.name || saved.team1.name}</strong><small>{draftTeam === "team1" ? "Picking now" : "Waiting"}</small></div><div className="draft-ball">⚽</div><div className={`draft-captain draft-captain-right${draftTeam === "team2" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team2.captain)?.name || saved.team2.name}</strong><small>{draftTeam === "team2" ? "Picking now" : "Waiting"}</small></div><p><strong>{draftCaptain?.name || saved[draftTeam].name}&apos;s turn</strong> · choose one player</p></div>}
+        <div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>{FormationBoard()}
+        {unassigned.length > 0 && <div className="unassigned-card"><h2>Players waiting to be picked · {unassigned.length}</h2><p className="note">Captains take turns. Only the captain whose hand is highlighted can make the next pick.</p><div className="roster-list">{unassigned.map((item) => RosterRow({ item, rowKey: item.id, children: unlocked ? <button className="b sm pri" onClick={() => assignPlayer(item.id, draftTeam)}>Pick for {draftCaptain?.name || saved[draftTeam].name}</button> : undefined }))}</div></div>}
+        {unlocked && <div className="button-row"><button className="b pri" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length} onClick={hostMatch}>Host Team 1 vs Team 2</button></div>}{unlocked && unassigned.length > 0 && <p className="note">Complete the captain draft before hosting the match.</p>}
       </div>}
     </>;
   }
@@ -1009,10 +1035,10 @@ export default function SquadSheet() {
       <div className="hd"><div className="lg"><span>Hosted match</span><b className={live ? "live" : ""}>{live ? "Live" : "Full-time"}</b></div><div className="sb"><div className="tm"><div className="crest">{initials(match.us)}</div><div className="tn">{match.us}</div></div><div className="sc"><span>{team1Goals}</span><i>-</i><span>{team2Goals}</span></div><div className="tm"><div className="crest">{initials(match.opp)}</div><div className="tn">{match.opp}</div></div></div>
         <div className="gl"><div>{scorerLines(1).map(([id, minutes]) => { const who = player(id); const sorted = minutes.filter((m): m is number => m !== null).sort((a, b) => a - b); const suffix = sorted.length ? sorted.map((m) => `${m}'`).join(", ") : minutes.length > 1 ? `(${minutes.length})` : ""; return who ? <div key={id}>{who.name} {suffix}</div> : null; })}</div><div className="bl">{match.ev.length ? "⚽" : ""}</div><div>{scorerLines(2).map(([id, minutes]) => { const who = player(id); const sorted = minutes.filter((m): m is number => m !== null).sort((a, b) => a - b); const suffix = sorted.length ? sorted.map((m) => `${m}'`).join(", ") : minutes.length > 1 ? `(${minutes.length})` : ""; return who ? <div key={id}>{who.name} {suffix}</div> : null; })}</div></div>
       </div>
-      {live ? <div className="bar"><button className="b pri" onClick={() => { setGoalTeam(1); setShowGoal(true); }}>⚽ {match.us} goal</button><button className="b pri" onClick={() => { setGoalTeam(2); setShowGoal(true); }}>⚽ {match.opp} goal</button><button className="b line" onClick={() => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.slice(0, -1) } }))}>Undo last goal</button><button className="b line" onClick={endCurrentMatch}>End & save</button></div> : <div className="bar"><span className="note">This match is finished and saved in history.</span><button className="b pri" onClick={() => { setState((current) => ({ ...current, team: null, match: newMatch(), tab: "team", sub: "timeline" })); }}>Set up next match</button></div>}
-      {showGoal && live && <div className="card" style={{ marginTop: 16 }}><h2>{goalTeam === 1 ? match.us : match.opp} goal</h2><div className="row2"><div><label htmlFor="gs">Scored by</label><select id="gs">{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div><div><label htmlFor="ga">Assist by</label><select id="ga"><option value="">No assist</option>{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div></div><label htmlFor="gm">Minute (optional)</label><input id="gm" type="number" min="0" max="130" inputMode="numeric" placeholder="e.g. 23" /><div className="button-row"><button className="b pri" onClick={addGoal}>Save goal</button><button className="b line" onClick={() => setShowGoal(false)}>Cancel</button></div></div>}
-      <div className="tabs match-tabs">{(["timeline", "lineups", "stats", "history", "edit"] as MatchTab[]).map((tab) => <button key={tab} onClick={() => setSub(tab)} className={state.sub === tab ? "on" : ""}>{tab}</button>)}</div>
-      {state.sub === "timeline" && Timeline()}{state.sub === "lineups" && <><div className="sec">{FormationBoard()}</div>{Squad({ ids: state.team.ids, title: `${match.us} lineup` })}{state.balancedTeams?.team2.ids.length ? Squad({ ids: state.balancedTeams.team2.ids, title: `${match.opp} lineup` }) : null}</>}{state.sub === "stats" && Stats()}{state.sub === "history" && HistoryView()}{state.sub === "edit" && MatchSettings()}
+      {unlocked ? (live ? <div className="bar"><button className="b pri" onClick={() => { setGoalTeam(1); setShowGoal(true); }}>⚽ {match.us} goal</button><button className="b pri" onClick={() => { setGoalTeam(2); setShowGoal(true); }}>⚽ {match.opp} goal</button><button className="b line" onClick={() => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.slice(0, -1) } }))}>Undo last goal</button><button className="b line" onClick={endCurrentMatch}>End & save</button></div> : <div className="bar"><span className="note">This match is finished and saved in history.</span><button className="b pri" onClick={() => { setState((current) => ({ ...current, team: null, match: newMatch(), tab: "team", sub: "timeline" })); }}>Set up next match</button></div>) : <div className="bar spectator-bar"><span className="note">View-only live match · Admin login is required to record goals or end the match.</span></div>}
+      {unlocked && showGoal && live && <div className="card" style={{ marginTop: 16 }}><h2>{goalTeam === 1 ? match.us : match.opp} goal</h2><div className="row2"><div><label htmlFor="gs">Scored by</label><select id="gs">{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div><div><label htmlFor="ga">Assist by</label><select id="ga"><option value="">No assist</option>{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div></div><label htmlFor="gm">Minute (optional)</label><input id="gm" type="number" min="0" max="130" inputMode="numeric" placeholder="e.g. 23" /><div className="button-row"><button className="b pri" onClick={addGoal}>Save goal</button><button className="b line" onClick={() => setShowGoal(false)}>Cancel</button></div></div>}
+      <div className="tabs match-tabs">{(["timeline", "lineups", "stats", "history", ...(unlocked ? ["edit" as const] : [])] as MatchTab[]).map((tab) => <button key={tab} onClick={() => setSub(tab)} className={state.sub === tab ? "on" : ""}>{tab}</button>)}</div>
+      {(state.sub === "timeline" || (!unlocked && state.sub === "edit")) && Timeline()}{state.sub === "lineups" && <><div className="sec">{FormationBoard()}</div>{Squad({ ids: state.team.ids, title: `${match.us} lineup` })}{state.balancedTeams?.team2.ids.length ? Squad({ ids: state.balancedTeams.team2.ids, title: `${match.opp} lineup` }) : null}</>}{state.sub === "stats" && Stats()}{state.sub === "history" && HistoryView()}{unlocked && state.sub === "edit" && MatchSettings()}
       {state.sub !== "history" && state.history.length > 0 && HistoryView()}
     </>;
   }
@@ -1021,7 +1047,7 @@ export default function SquadSheet() {
     const events = state.match.ev.map((goal, index) => ({ ...goal, index })).sort((a, b) => (a.m ?? 999) - (b.m ?? 999) || a.index - b.index);
     return <div className="sec"><h2>Timeline</h2>{events.length ? events.map((goal) => {
       const teamName = (goal.team || 1) === 1 ? state.match.us : state.match.opp;
-      return <div className="tl" key={goal.index}><div className="mn">{goal.m !== null ? `${goal.m}'` : "⚽"}</div><div className="t"><div>⚽ {player(goal.s)?.name || "?"}</div><small style={{ color: "var(--mu)" }}>{teamName}{goal.a && player(goal.a) ? ` · Assist: ${player(goal.a)?.name}` : ""}</small></div>{state.match.st === "Live" && <button className="b line sm" onClick={() => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.filter((_, index) => index !== goal.index) } }))}>Delete</button>}</div>;
+      return <div className="tl" key={goal.index}><div className="mn">{goal.m !== null ? `${goal.m}'` : "⚽"}</div><div className="t"><div>⚽ {player(goal.s)?.name || "?"}</div><small style={{ color: "var(--mu)" }}>{teamName}{goal.a && player(goal.a) ? ` · Assist: ${player(goal.a)?.name}` : ""}</small></div>{unlocked && state.match.st === "Live" && <button className="b line sm" onClick={() => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.filter((_, index) => index !== goal.index) } }))}>Delete</button>}</div>;
     }) : <div className="empty">No goals yet. Use either team&apos;s goal button to record the scorer.</div>}</div>;
   }
 
@@ -1049,7 +1075,7 @@ export default function SquadSheet() {
     return <div className="sec match-history"><h2>Match history</h2>{state.history.length ? state.history.map((entry) => { const open = openHistoryId === entry.id; return <article className={`history-card${open ? " is-open" : ""}`} key={entry.id}>
       <button className="history-summary" aria-expanded={open} onClick={() => { setOpenHistoryId(open ? "" : entry.id); setHistoryDetailTab("timeline"); }}><span className="history-date">{new Date(entry.endedAt).toLocaleDateString()}</span><span className="history-score"><span>{entry.team1.name}</span><strong>{entry.score1} – {entry.score2}</strong><span>{entry.team2.name}</span></span><span className="history-result">Full-time <b>{open ? "⌃" : "⌄"}</b></span></button>
       {open && detail(entry)}
-      <button className="b line sm history-delete" onClick={() => removeHistory(entry.id)}>Delete match</button>
+      {unlocked && <button className="b line sm history-delete" onClick={() => removeHistory(entry.id)}>Delete match</button>}
     </article>; }) : <div className="empty">Ended matches will be saved here.</div>}</div>;
   }
 
@@ -1087,39 +1113,47 @@ export default function SquadSheet() {
   }
 
   function MatchSettings() {
-    if (!state.team) return null;
+    if (!unlocked || !state.team) return null;
     const updateMatch = (patch: Partial<Match>) => setState((current) => ({ ...current, match: { ...current.match, ...patch } }));
     const allIds = [...new Set([...state.team.ids, ...(state.balancedTeams?.team2.ids || [])])];
     return <div className="sec"><h2>Match settings</h2><div className="row2"><div><label htmlFor="tn">Team 1 name</label><input id="tn" value={state.match.us} onChange={(e) => updateMatch({ us: e.target.value })} /></div><div><label htmlFor="on">Team 2 name</label><input id="on" value={state.match.opp} onChange={(e) => updateMatch({ opp: e.target.value })} /></div></div><label htmlFor="mo">Man of the match</label><select id="mo" value={state.match.motm} onChange={(e) => updateMatch({ motm: e.target.value })}><option value="">Automatic</option>{allIds.map((id) => <option value={id} key={id}>{player(id)?.name}</option>)}</select>
       <div className="button-row">{state.match.st === "Live" && <button className="b pri" onClick={endCurrentMatch}>End & save match</button>}<button className="b line" onClick={() => { if (!window.confirm("Delete the current match? Saved history will be kept.")) return; setShowGoal(false); setState((current) => ({ ...current, team: null, match: newMatch(), tab: "team", sub: "timeline" })); }}>Delete current match</button></div></div>;
   }
 
-  if (!accessChecked || !unlocked) {
-    const unlock = (event: React.FormEvent) => {
-      event.preventDefault();
-      if (password !== "3456") { setPasswordError("Incorrect password. Try again."); return; }
-      try { sessionStorage.setItem("squad-sheet-unlocked", "yes"); } catch { /* The app can still unlock for this page. */ }
+  const unlock = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPasswordError("");
+    try {
+      const response = await fetch("/api/auth", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
+      if (!response.ok) { setPasswordError("Incorrect password. Try again."); return; }
       setPassword("");
-      setPasswordError("");
+      setShowAdminLogin(false);
       setUnlocked(true);
-    };
-    return <div className="app access-screen"><form className="access-card" onSubmit={unlock}>
-      <img src="/badges/squad-sheet-fc.png" alt="Squad Sheet FC" />
-      <p className="access-kicker">SQUAD SHEET</p>
-      <h1>Enter password</h1>
-      <p className="note">Unlock the team builder to manage players, teams and matches.</p>
-      <label htmlFor="app-password">Password</label>
-      <input id="app-password" type="password" inputMode="numeric" autoComplete="current-password" autoFocus={accessChecked} value={password} onChange={(event) => { setPassword(event.target.value); setPasswordError(""); }} />
-      {passwordError && <p className="access-error" role="alert">{passwordError}</p>}
-      <button className="b pri" type="submit" disabled={!accessChecked}>Unlock</button>
-    </form></div>;
-  }
-
-  const syncText = syncStatus === "loading" ? "Loading Supabase…" : syncStatus === "saving" ? "Saving…" : syncStatus === "saved" ? "Saved to Supabase" : "Saved locally · Supabase offline";
-  const lock = () => {
-    try { sessionStorage.removeItem("squad-sheet-unlocked"); } catch { /* Ignore unavailable session storage. */ }
-    hydrated.current = false;
+    } catch {
+      setPasswordError("Could not reach the server. Try again.");
+    }
+  };
+  const lock = async () => {
+    await fetch("/api/auth", { method: "DELETE" }).catch(() => null);
+    setEditId("");
+    setShowGoal(false);
+    setDraggedFormationId("");
     setUnlocked(false);
   };
-  return <div className="app"><nav className="tabs" aria-label="Main navigation">{(["match", "team", "players"] as MainTab[]).map((tab) => <button key={tab} onClick={() => setTab(tab)} className={state.tab === tab ? "on" : ""}>{tab}</button>)}</nav><div className={`sync-status is-${syncStatus}`} role="status" aria-live="polite"><span />{syncText}<button type="button" onClick={lock}>Lock</button></div><main>{state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : MatchView()}</main></div>;
+  if (!accessChecked || !hydrated.current) return <div className="app access-screen"><div className="access-card"><img src="/badges/squad-sheet-fc.png" alt="Squad Sheet FC" /><p className="access-kicker">SQUAD SHEET</p><h1>Loading…</h1></div></div>;
+
+  const syncText = !unlocked ? (syncStatus === "loading" ? "Loading public view…" : syncStatus === "offline" ? "View only · Supabase offline" : "View only · Live data") : syncStatus === "loading" ? "Loading Supabase…" : syncStatus === "saving" ? "Saving…" : syncStatus === "saved" ? "Saved to Supabase" : "Saved locally · Supabase offline";
+  return <div className={`app${unlocked ? " is-admin" : " is-view-only"}`}><nav className="tabs" aria-label="Main navigation">{(["match", "team", "players"] as MainTab[]).map((tab) => <button key={tab} onClick={() => setTab(tab)} className={state.tab === tab ? "on" : ""}>{tab}</button>)}</nav><div className={`sync-status is-${syncStatus}`} role="status" aria-live="polite"><span />{syncText}<button type="button" onClick={() => unlocked ? void lock() : setShowAdminLogin(true)}>{unlocked ? "Exit admin" : "Admin login"}</button></div><main>{state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : MatchView()}</main>
+    {showAdminLogin && !unlocked && <div className="admin-login-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAdminLogin(false); }}><form className="access-card admin-login-card" onSubmit={unlock} role="dialog" aria-modal="true" aria-labelledby="admin-login-title">
+      <button className="admin-login-close" type="button" onClick={() => setShowAdminLogin(false)} aria-label="Close admin login">×</button>
+      <img src="/badges/squad-sheet-fc.png" alt="" />
+      <p className="access-kicker">ADMIN MODE</p>
+      <h1 id="admin-login-title">Enter password</h1>
+      <p className="note">Admin mode can manage players, teams and matches.</p>
+      <label htmlFor="app-password">Password</label>
+      <input id="app-password" type="password" inputMode="numeric" autoComplete="current-password" autoFocus value={password} onChange={(event) => { setPassword(event.target.value); setPasswordError(""); }} />
+      {passwordError && <p className="access-error" role="alert">{passwordError}</p>}
+      <button className="b pri" type="submit">Unlock admin mode</button>
+    </form></div>}
+  </div>;
 }
