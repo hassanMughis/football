@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 const stateObjectPath = "player-images/squad-sheet/app-state.json";
 const statNames = ["PAC", "SHO", "PAS", "DRI", "DEF", "PHY"] as const;
 const specialities = new Set(["", "Passing", "Scoring", "Shooting", "Dribbling", "Teamwork", "Goalkeeping", "Defending", "Pace", "Strength", "Heading"]);
+const maxPlayerSkills = 4;
 const cardStyles = new Set(["classic", "royal", "electric", "crimson"]);
 const positions = new Set(["GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST"]);
 
@@ -15,6 +16,8 @@ type PlayerRow = {
   name: string;
   rating: number;
   speciality: string;
+  skills: string[] | null;
+  custom_overall: number | null;
   image_url: string | null;
   card_style: string;
   position: string;
@@ -60,27 +63,35 @@ function flagEmoji(value: unknown) {
   return [...flag.toUpperCase()].map((letter) => String.fromCodePoint(0x1f1e6 + letter.charCodeAt(0) - 65)).join("");
 }
 
+function normalizedSkills(value: unknown, legacySkill: unknown) {
+  const candidates = [...(Array.isArray(value) ? value : []), legacySkill];
+  return [...new Set(candidates.map(String).filter((skill) => skill && specialities.has(skill)))].slice(0, maxPlayerSkills);
+}
+
 function generatedStats(player: JsonObject) {
   const rating = Math.max(0, Math.min(10, Math.round(numberValue(player.rating) * 2) / 2));
-  const speciality = typeof player.spec === "string" ? player.spec : "";
-  if (!rating) return { OVR: null, PAC: null, SHO: null, PAS: null, DRI: null, DEF: null, PHY: null };
+  const skills = normalizedSkills(player.skills, player.spec);
+  const customOverallValue = Number(player.customOverall);
+  const customOverall = Number.isInteger(customOverallValue) && customOverallValue >= 1 && customOverallValue <= 99 ? customOverallValue : null;
+  if (!rating) return { OVR: customOverall, PAC: null, SHO: null, PAS: null, DRI: null, DEF: null, PHY: null };
   const base = 44 + rating * 5;
   const boost = (label: typeof statNames[number]) => {
-    if ((speciality === "Scoring" || speciality === "Shooting") && label === "SHO") return 6;
-    if (speciality === "Passing" && label === "PAS") return 6;
-    if (speciality === "Dribbling" && label === "DRI") return 6;
-    if (speciality === "Teamwork" && (label === "PAS" || label === "PHY")) return 4;
-    if (speciality === "Goalkeeping" && label === "DEF") return 6;
-    if (speciality === "Goalkeeping" && label === "PHY") return 4;
-    if (speciality === "Defending" && label === "DEF") return 6;
-    if (speciality === "Pace" && label === "PAC") return 6;
-    if (speciality === "Strength" && label === "PHY") return 6;
-    if (speciality === "Heading" && (label === "SHO" || label === "PHY")) return 3;
-    return 0;
+    let total = 0;
+    if ((skills.includes("Scoring") || skills.includes("Shooting")) && label === "SHO") total += 6;
+    if (skills.includes("Passing") && label === "PAS") total += 6;
+    if (skills.includes("Dribbling") && label === "DRI") total += 6;
+    if (skills.includes("Teamwork") && (label === "PAS" || label === "PHY")) total += 4;
+    if (skills.includes("Goalkeeping") && label === "DEF") total += 6;
+    if (skills.includes("Goalkeeping") && label === "PHY") total += 4;
+    if (skills.includes("Defending") && label === "DEF") total += 6;
+    if (skills.includes("Pace") && label === "PAC") total += 6;
+    if (skills.includes("Strength") && label === "PHY") total += 6;
+    if (skills.includes("Heading") && (label === "SHO" || label === "PHY")) total += 3;
+    return total;
   };
   const offsets = { PAC: 1, SHO: -1, PAS: 0, DRI: 2, DEF: -8, PHY: -3 } as const;
   const stats = Object.fromEntries(statNames.map((label) => [label, Math.round(Math.max(1, Math.min(99, base + offsets[label] + boost(label))))])) as Record<typeof statNames[number], number>;
-  return { OVR: Math.round(statNames.reduce((sum, label) => sum + stats[label], 0) / statNames.length), ...stats };
+  return { OVR: customOverall ?? Math.round(statNames.reduce((sum, label) => sum + stats[label], 0) / statNames.length), ...stats };
 }
 
 function validateAndEnrichState(value: unknown) {
@@ -95,12 +106,16 @@ function validateAndEnrichState(value: unknown) {
     if (!id || id.length > 80 || ids.has(id)) throw new Error("Every player needs a unique ID.");
     if (!name || name.length > 60) throw new Error("Player names must be between 1 and 60 characters.");
     if (rating < 0 || rating > 10 || Math.abs(rating * 2 - Math.round(rating * 2)) > Number.EPSILON) throw new Error("Player ratings must be between 0 and 10 in half-point steps.");
-    const spec = specialities.has(String(candidate.spec || "")) ? String(candidate.spec || "") : "";
+    const skills = normalizedSkills(candidate.skills, candidate.spec);
+    const spec = skills[0] || "";
+    const rawCustomOverall = candidate.customOverall;
+    const customOverall = rawCustomOverall === undefined || rawCustomOverall === null || rawCustomOverall === "" ? null : numberValue(rawCustomOverall, Number.NaN);
+    if (customOverall !== null && (!Number.isInteger(customOverall) || customOverall < 1 || customOverall > 99)) throw new Error("Custom OVR must be a whole number from 1 to 99.");
     const defaultPosition = ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" } as Record<string, string>)[spec] || "CM";
     const position = positions.has(String(candidate.position || "")) ? String(candidate.position) : defaultPosition;
     const cardStyle = cardStyles.has(String(candidate.cardStyle || "")) ? String(candidate.cardStyle) : "classic";
     const flag = flagEmoji(candidate.flag);
-    const normalized = { ...candidate, id, name, rating, spec, position, cardStyle, flag, on: candidate.on !== false };
+    const normalized = { ...candidate, id, name, rating, spec, skills, customOverall, position, cardStyle, flag, on: candidate.on !== false };
     ids.add(id);
     return { ...normalized, cardStats: generatedStats(normalized) };
   });
@@ -137,7 +152,7 @@ async function writeStorageState(state: JsonObject) {
 
 async function readDatabaseState() {
   const [playersResponse, settingsResponse] = await Promise.all([
-    supabaseRest("players?select=client_id,name,rating,speciality,image_url,card_style,position,flag,available,team,is_captain,in_match_squad,overall,pac,sho,pas,dri,def,phy&order=sort_order.asc,id.asc"),
+    supabaseRest("players?select=client_id,name,rating,speciality,skills,custom_overall,image_url,card_style,position,flag,available,team,is_captain,in_match_squad,overall,pac,sho,pas,dri,def,phy&order=sort_order.asc,id.asc"),
     supabaseRest("squad_settings?id=eq.1&select=team_1_name,team_2_name,match_team_name,opponent_name,opponent_goals,match_status,motm_client_id,app_state"),
   ]);
   const rows = await playersResponse.json() as PlayerRow[];
@@ -169,6 +184,8 @@ async function readDatabaseState() {
     name: row.name,
     rating: row.rating,
     spec: row.speciality,
+    skills: row.skills || (row.speciality ? [row.speciality] : []),
+    customOverall: row.custom_overall ?? undefined,
     image: row.image_url || undefined,
     cardStyle: row.card_style,
     position: row.position,

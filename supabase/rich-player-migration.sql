@@ -5,6 +5,8 @@ begin;
 
 alter table public.players add column if not exists client_id text;
 alter table public.players add column if not exists speciality text not null default '';
+alter table public.players add column if not exists skills text[] not null default '{}'::text[];
+alter table public.players add column if not exists custom_overall integer;
 alter table public.players add column if not exists card_style text not null default 'classic';
 alter table public.players add column if not exists position text not null default 'CM';
 alter table public.players add column if not exists lineup_position text;
@@ -26,6 +28,9 @@ where client_id is null or btrim(client_id) = '';
 alter table public.players alter column client_id set not null;
 create unique index if not exists players_client_id_key on public.players (client_id);
 
+update public.players set skills = array[speciality]
+where cardinality(skills) = 0 and speciality <> '';
+
 alter table public.players drop constraint if exists players_rating_check;
 update public.players
 set rating = greatest(1, least(10, round((rating - 42.5) / 5.0)::integer))
@@ -39,6 +44,14 @@ do $$ begin
   end if;
   alter table public.players drop constraint if exists players_speciality_check;
   alter table public.players add constraint players_speciality_check check (speciality in ('', 'Passing', 'Scoring', 'Shooting', 'Dribbling', 'Teamwork', 'Goalkeeping', 'Defending', 'Pace', 'Strength', 'Heading'));
+  alter table public.players drop constraint if exists players_skills_check;
+  alter table public.players add constraint players_skills_check check (
+    cardinality(skills) <= 4 and
+    skills <@ array['Passing', 'Scoring', 'Shooting', 'Dribbling', 'Teamwork', 'Goalkeeping', 'Defending', 'Pace', 'Strength', 'Heading']::text[]
+  );
+  if not exists (select 1 from pg_constraint where conname = 'players_custom_overall_check' and conrelid = 'public.players'::regclass) then
+    alter table public.players add constraint players_custom_overall_check check (custom_overall is null or custom_overall between 1 and 99);
+  end if;
   if not exists (select 1 from pg_constraint where conname = 'players_card_style_check' and conrelid = 'public.players'::regclass) then
     alter table public.players add constraint players_card_style_check check (card_style in ('classic', 'royal', 'electric', 'crimson'));
   end if;
@@ -167,13 +180,19 @@ begin
     if length(btrim(item->>'name')) not between 1 and 60 then raise exception 'Invalid player name'; end if;
 
     insert into public.players (
-      client_id, name, rating, speciality, image_url, card_style, position, lineup_position, flag,
+      client_id, name, rating, speciality, skills, custom_overall, image_url, card_style, position, lineup_position, flag,
       available, team, in_match_squad, is_captain, overall, pac, sho, pas, dri, def, phy, sort_order
     ) values (
       player_id,
       btrim(item->>'name'),
       coalesce((item->>'rating')::numeric, 0),
       coalesce(item->>'spec', ''),
+      case
+        when jsonb_typeof(item->'skills') = 'array' then array(select value from jsonb_array_elements_text(item->'skills') with ordinality as selected(value, position) order by position limit 4)
+        when coalesce(item->>'spec', '') <> '' then array[item->>'spec']
+        else array[]::text[]
+      end,
+      nullif(item->>'customOverall', '')::integer,
       nullif(item->>'image', ''),
       coalesce(nullif(item->>'cardStyle', ''), 'classic'),
       coalesce(nullif(item->>'position', ''), 'CM'),
@@ -203,6 +222,7 @@ begin
     )
     on conflict (client_id) do update set
       name = excluded.name, rating = excluded.rating, speciality = excluded.speciality,
+      skills = excluded.skills, custom_overall = excluded.custom_overall,
       image_url = excluded.image_url, card_style = excluded.card_style, position = excluded.position,
       lineup_position = excluded.lineup_position,
       flag = excluded.flag, available = excluded.available, team = excluded.team,

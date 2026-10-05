@@ -15,7 +15,23 @@ const SKILL_BADGES: Record<string, string> = {
   Strength: "/badges/skills/strength.png",
   Heading: "/badges/skills/heading.png",
 };
+const MAX_PLAYER_SKILLS = 4;
 const POSITIONS = ["GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST"] as const;
+const POSITION_SKILL_PRIORITY: Record<string, string[]> = {
+  GK: ["Goalkeeping", "Teamwork", "Strength", "Passing"],
+  CB: ["Defending", "Heading", "Strength", "Teamwork", "Pace"],
+  LB: ["Pace", "Defending", "Passing", "Dribbling", "Teamwork"],
+  RB: ["Pace", "Defending", "Passing", "Dribbling", "Teamwork"],
+  CDM: ["Defending", "Passing", "Strength", "Teamwork"],
+  CM: ["Passing", "Teamwork", "Dribbling", "Strength"],
+  CAM: ["Passing", "Dribbling", "Shooting", "Scoring", "Teamwork"],
+  LM: ["Pace", "Dribbling", "Passing", "Shooting", "Teamwork"],
+  RM: ["Pace", "Dribbling", "Passing", "Shooting", "Teamwork"],
+  LW: ["Pace", "Dribbling", "Scoring", "Shooting", "Passing"],
+  RW: ["Pace", "Dribbling", "Scoring", "Shooting", "Passing"],
+  CF: ["Scoring", "Shooting", "Heading", "Dribbling", "Passing"],
+  ST: ["Scoring", "Shooting", "Heading", "Pace", "Strength"],
+};
 const CARD_STYLES = [
   { id: "classic", name: "Classic Gold", src: "/card-templates/classic-gold.png", cleanSrc: "/card-templates/classic-gold-clean.png" },
   { id: "royal", name: "Royal Gold", src: "/card-templates/royal-gold.png", cleanSrc: "/card-templates/royal-gold-clean.png" },
@@ -28,7 +44,7 @@ type MainTab = "match" | "team" | "players";
 type MatchTab = "timeline" | "lineups" | "stats" | "history" | "edit";
 type HistoryDetailTab = "timeline" | "lineups" | "stats";
 type CardStyleId = typeof CARD_STYLES[number]["id"];
-type Player = { id: string; name: string; rating: number; spec: string; image?: string; cardStyle?: CardStyleId; position?: string; flag?: string; on?: boolean };
+type Player = { id: string; name: string; rating: number; spec: string; skills?: string[]; customOverall?: number; image?: string; cardStyle?: CardStyleId; position?: string; flag?: string; on?: boolean };
 type Goal = { s: string; a: string; m: number | null; team?: 1 | 2 };
 type Team = { ids: string[]; captain: string };
 type LineupPositions = Record<string, string>;
@@ -111,6 +127,16 @@ const initialState = (): AppState => ({
 
 const legacyRatingToStars = (rating: number) => Math.max(1, Math.min(10, Math.round((rating - 42.5) / 5)));
 const normalizeRating = (rating: number) => Math.max(0, Math.min(10, Math.round(rating * 2) / 2));
+const normalizeCustomOverall = (overall: unknown) => {
+  const value = Number(overall);
+  return Number.isInteger(value) && value >= 1 && value <= 99 ? value : undefined;
+};
+const validSkills = (skills: unknown, legacySkill = "") => [...new Set([
+  ...(Array.isArray(skills) ? skills : []),
+  legacySkill,
+].filter((skill): skill is string => typeof skill === "string" && SPECIALITIES.includes(skill as typeof SPECIALITIES[number])))].slice(0, MAX_PLAYER_SKILLS);
+const playerSkills = (player: Player) => validSkills(player.skills, player.spec);
+const toggledSkills = (skills: string[], skill: string) => skills.includes(skill) ? skills.filter((item) => item !== skill) : skills.length < MAX_PLAYER_SKILLS ? [...skills, skill] : skills;
 
 function RatingPicker({ value, onChange }: { value: number; onChange: (rating: number) => void }) {
   const [hoverRating, setHoverRating] = useState<number | null>(null);
@@ -147,6 +173,16 @@ function RatingPicker({ value, onChange }: { value: number; onChange: (rating: n
   </div>;
 }
 
+function SkillPicker({ skills, onChange }: { skills: string[]; onChange: (skills: string[]) => void }) {
+  return <>
+    <div className="cl edit-specialities skill-picker">{SPECIALITIES.map((skill) => {
+      const selected = skills.includes(skill);
+      return <button type="button" key={skill} disabled={!selected && skills.length >= MAX_PLAYER_SKILLS} onClick={() => onChange(toggledSkills(skills, skill))} className={selected ? "on" : ""} aria-pressed={selected}>{skill}</button>;
+    })}</div>
+    <p className="skill-count">{skills.length}/{MAX_PLAYER_SKILLS} selected</p>
+  </>;
+}
+
 const restoreState = (value: unknown): AppState => {
   const base = initialState();
   if (!value || typeof value !== "object" || Array.isArray(value)) return base;
@@ -157,11 +193,14 @@ const restoreState = (value: unknown): AppState => {
     .map((item) => {
       const legacy = item as Player & { id: string | number; available?: boolean; imageUrl?: string | null };
       const rawRating = Number(legacy.rating) || 0;
+      const skills = validSkills(legacy.skills, legacy.spec);
       return {
         id: String(legacy.id),
         name: legacy.name.trim() || "Player",
         rating: rawRating > 10 ? legacyRatingToStars(rawRating) : normalizeRating(rawRating),
-        spec: typeof legacy.spec === "string" ? legacy.spec : "",
+        spec: skills[0] || "",
+        skills,
+        customOverall: normalizeCustomOverall(legacy.customOverall),
         image: typeof legacy.image === "string" ? legacy.image : typeof legacy.imageUrl === "string" ? legacy.imageUrl : undefined,
         cardStyle: CARD_STYLES.some((style) => style.id === legacy.cardStyle) ? legacy.cardStyle : "classic",
         position: typeof legacy.position === "string" ? legacy.position : undefined,
@@ -231,29 +270,40 @@ const legacySquadState = (value: unknown): AppState | null => {
 };
 
 const ratingLabel = (player: Player) => player.rating ? `${player.rating}/10` : "Not rated";
-const specialityLabel = (player: Player) => player.spec || "No speciality";
+const specialityLabel = (player: Player) => playerSkills(player).join(" · ") || "No skills";
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((word) => word[0] || "").join("").toUpperCase() || "?";
-const sortPlayers = (players: Player[]) => [...players].sort((a, b) => b.rating - a.rating || Number(b.spec === "Teamwork") - Number(a.spec === "Teamwork") || a.name.localeCompare(b.name));
-const defaultPosition = (player: Player) => player.position || ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" }[player.spec] || "CM");
+const sortPlayers = (players: Player[]) => [...players].sort((a, b) => b.rating - a.rating || Number(playerSkills(b).includes("Teamwork")) - Number(playerSkills(a).includes("Teamwork")) || a.name.localeCompare(b.name));
+const defaultPosition = (player: Player) => player.position || ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" }[playerSkills(player)[0]] || "CM");
+const primarySkill = (player: Player) => {
+  const skills = playerSkills(player);
+  return POSITION_SKILL_PRIORITY[defaultPosition(player)]?.find((skill) => skills.includes(skill)) || skills[0] || "";
+};
 const generatedCardStats = (player: Player) => {
   if (!player.rating) return [["PAC", "–"], ["SHO", "–"], ["PAS", "–"], ["DRI", "–"], ["DEF", "–"], ["PHY", "–"]];
   const base = 44 + player.rating * 5;
+  const skills = playerSkills(player);
   const boost = (label: string) => {
-    if ((player.spec === "Scoring" || player.spec === "Shooting") && label === "SHO") return 6;
-    if (player.spec === "Passing" && label === "PAS") return 6;
-    if (player.spec === "Dribbling" && label === "DRI") return 6;
-    if (player.spec === "Teamwork" && (label === "PAS" || label === "PHY")) return 4;
-    if (player.spec === "Goalkeeping" && label === "DEF") return 6;
-    if (player.spec === "Goalkeeping" && label === "PHY") return 4;
-    if (player.spec === "Defending" && label === "DEF") return 6;
-    if (player.spec === "Pace" && label === "PAC") return 6;
-    if (player.spec === "Strength" && label === "PHY") return 6;
-    if (player.spec === "Heading" && (label === "SHO" || label === "PHY")) return 3;
-    return 0;
+    let total = 0;
+    if ((skills.includes("Scoring") || skills.includes("Shooting")) && label === "SHO") total += 6;
+    if (skills.includes("Passing") && label === "PAS") total += 6;
+    if (skills.includes("Dribbling") && label === "DRI") total += 6;
+    if (skills.includes("Teamwork") && (label === "PAS" || label === "PHY")) total += 4;
+    if (skills.includes("Goalkeeping") && label === "DEF") total += 6;
+    if (skills.includes("Goalkeeping") && label === "PHY") total += 4;
+    if (skills.includes("Defending") && label === "DEF") total += 6;
+    if (skills.includes("Pace") && label === "PAC") total += 6;
+    if (skills.includes("Strength") && label === "PHY") total += 6;
+    if (skills.includes("Heading") && (label === "SHO" || label === "PHY")) total += 3;
+    return total;
   };
   const value = (label: string, offset: number) => String(Math.round(Math.max(1, Math.min(99, base + offset + boost(label)))));
   return [["PAC", value("PAC", 1)], ["SHO", value("SHO", -1)], ["PAS", value("PAS", 0)], ["DRI", value("DRI", 2)], ["DEF", value("DEF", -8)], ["PHY", value("PHY", -3)]];
 };
+const calculatedOverall = (player: Player) => {
+  const values = generatedCardStats(player).map(([, value]) => Number(value)).filter(Number.isFinite);
+  return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
+};
+const displayedOverall = (player: Player) => player.customOverall ?? calculatedOverall(player);
 
 const FORMATION_SLOTS: Record<number, string[]> = {
   1: ["GK"],
@@ -288,20 +338,21 @@ const positionFit = (item: Player, slot: string) => {
   const family = positionFamily(slot);
   const preferredFamily = positionFamily(preferred);
   const stats = Object.fromEntries(generatedCardStats(item).map(([label, value]) => [label, Number(value) || 50]));
+  const skills = playerSkills(item);
   let score = preferred === slot ? 120 : preferredFamily === family ? 62 : 12;
   if (slot === "GK") score += preferred === "GK" ? 100 : (stats.DEF + stats.PHY) / 12;
   else if (family === "defence") score += (stats.DEF * 1.4 + stats.PHY + stats.PAC * .35) / 10;
   else if (family === "midfield") score += (stats.PAS * 1.25 + stats.DRI + stats.PHY * .3) / 10;
   else score += (stats.SHO * 1.35 + stats.PAC + stats.DRI * .65) / 10;
-  if (item.spec === "Passing" && family === "midfield") score += 20;
-  if ((item.spec === "Scoring" || item.spec === "Shooting") && family === "attack") score += 20;
-  if (item.spec === "Dribbling" && ["LW", "RW", "CAM"].includes(slot)) score += 20;
-  if (item.spec === "Teamwork" && ["CDM", "CM", "CB"].includes(slot)) score += 14;
-  if (item.spec === "Goalkeeping" && slot === "GK") score += 30;
-  if (item.spec === "Defending" && family === "defence") score += 20;
-  if (item.spec === "Pace" && ["LW", "RW", "LM", "RM", "LB", "RB", "ST"].includes(slot)) score += 18;
-  if (item.spec === "Strength" && ["CB", "CDM", "ST"].includes(slot)) score += 18;
-  if (item.spec === "Heading" && ["CB", "CF", "ST"].includes(slot)) score += 18;
+  if (skills.includes("Passing") && family === "midfield") score += 20;
+  if ((skills.includes("Scoring") || skills.includes("Shooting")) && family === "attack") score += 20;
+  if (skills.includes("Dribbling") && ["LW", "RW", "CAM"].includes(slot)) score += 20;
+  if (skills.includes("Teamwork") && ["CDM", "CM", "CB"].includes(slot)) score += 14;
+  if (skills.includes("Goalkeeping") && slot === "GK") score += 30;
+  if (skills.includes("Defending") && family === "defence") score += 20;
+  if (skills.includes("Pace") && ["LW", "RW", "LM", "RM", "LB", "RB", "ST"].includes(slot)) score += 18;
+  if (skills.includes("Strength") && ["CB", "CDM", "ST"].includes(slot)) score += 18;
+  if (skills.includes("Heading") && ["CB", "CF", "ST"].includes(slot)) score += 18;
   return score;
 };
 
@@ -346,7 +397,8 @@ const numericBalanceVector = (player: Player): BalanceVector | null => {
   if (!player.rating) return null;
   const values = generatedCardStats(player).map(([, value]) => Number(value));
   if (values.length !== 6 || values.some((value) => !Number.isFinite(value))) return null;
-  return [player.rating, values[0], values[1], values[2], values[3], values[4], values[5]];
+  const ranking = player.customOverall ? Math.max(0, Math.min(10, (player.customOverall - 44) / 5)) : player.rating;
+  return [ranking, values[0], values[1], values[2], values[3], values[4], values[5]];
 };
 
 const createBalanceItems = (players: Player[]) => {
@@ -462,7 +514,7 @@ const improveBalance = (firstSeed: BalanceItem[], secondSeed: BalanceItem[], loc
 const rosterBalanceSeed = (players: Player[]) => {
   const fingerprint = [...players]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map((item) => `${item.id}:${item.rating}:${item.spec}:${defaultPosition(item)}`)
+    .map((item) => `${item.id}:${item.rating}:${item.customOverall || "auto"}:${playerSkills(item).join(",")}:${defaultPosition(item)}`)
     .join("|");
   let hash = 2166136261;
   for (const character of fingerprint) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
@@ -559,7 +611,7 @@ async function preparePlayerImage(file: File) {
 
 export default function SquadSheet() {
   const [state, setState] = useState<AppState>(initialState);
-  const [draft, setDraft] = useState<{ rating: number; spec: string; name: string; image: string; cardStyle: CardStyleId; position: string; flag: string }>({ rating: 0, spec: "", name: "", image: "", cardStyle: "classic", position: "CM", flag: "🇵🇰" });
+  const [draft, setDraft] = useState<{ rating: number; customOverall: string; skills: string[]; name: string; image: string; cardStyle: CardStyleId; position: string; flag: string }>({ rating: 0, customOverall: "", skills: [], name: "", image: "", cardStyle: "classic", position: "CM", flag: "🇵🇰" });
   const [pickCaptain, setPickCaptain] = useState("");
   const [pickCaptainTwo, setPickCaptainTwo] = useState("");
   const [showGoal, setShowGoal] = useState(false);
@@ -701,18 +753,22 @@ export default function SquadSheet() {
     const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
     const flagCode = flagCountryCode(item.flag);
     const flagSrc = flagCode === "PK" ? "/flags/pk.svg" : flagCode ? `https://flagcdn.com/w40/${flagCode.toLowerCase()}.png` : "";
-    const badgeSrc = SKILL_BADGES[item.spec] || "/badges/squad-sheet-fc.png";
+    const skills = playerSkills(item);
+    const featuredSkill = primarySkill(item);
+    const badgeSrc = SKILL_BADGES[featuredSkill] || "/badges/squad-sheet-fc.png";
+    const secondarySkills = skills.filter((skill) => skill !== featuredSkill);
     const cardStats = generatedCardStats(item);
-    const numericStats = cardStats.map(([, value]) => Number(value)).filter(Number.isFinite);
-    const overall = numericStats.length ? Math.round(numericStats.reduce((sum, value) => sum + value, 0) / numericStats.length) : "–";
+    const overall = displayedOverall(item) ?? "–";
     return <article className={`player-card${item.on === false ? " is-inactive" : ""}${compact ? " is-compact" : ""}`}>
       <div className={`player-card__visual card-theme-${design.id}`}>
         <img className="player-card__frame" src={item.image ? design.cleanSrc : design.src} alt="" aria-hidden="true" />
-        <div className="player-card__strip"><strong>{overall}</strong><span>{positionOverride || defaultPosition(item)}</span><span className="player-card__flag">{flagSrc ? <img src={flagSrc} alt={`${flagCode} flag`} /> : flagEmoji(item.flag)}</span><img src={badgeSrc} alt={item.spec ? `${item.spec} skill badge` : "Squad Sheet FC badge"} /></div>
+        <div className="player-card__strip"><strong>{overall}</strong><span>{defaultPosition(item)}</span><span className="player-card__flag">{flagSrc ? <img src={flagSrc} alt={`${flagCode} flag`} /> : flagEmoji(item.flag)}</span><img src={badgeSrc} alt={featuredSkill ? `${featuredSkill} skill badge` : "Squad Sheet FC badge"} /></div>
+        {secondarySkills.length > 0 && <div className="player-card__skill-stack" aria-label={`Other skills: ${secondarySkills.join(", ")}`}>{secondarySkills.map((skill) => <img key={skill} src={SKILL_BADGES[skill]} alt={`${skill} skill`} title={skill} />)}</div>}
+        {positionOverride && <span className="player-card__lineup-position" title={`Assigned team position: ${positionOverride}`}>{positionOverride}</span>}
         <div className="player-card__photo">
           {item.image && <img src={item.image} alt={`${item.name} portrait`} />}
         </div>
-        <div className="player-card__identity"><h3 className={item.name.length > 18 ? "is-long" : item.name.length > 13 ? "is-medium" : ""} title={item.name}>{item.name}</h3><p>{item.spec || "Footballer"}</p></div>
+        <div className="player-card__identity"><h3 className={item.name.length > 18 ? "is-long" : item.name.length > 13 ? "is-medium" : ""} title={item.name}>{item.name}</h3><p>{skills.join(" · ") || "Footballer"}</p></div>
         <div className="player-card__stats">{cardStats.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
       </div>
       <div className="player-card__meta"><span>{item.rating ? `${item.rating}/10 rating` : "Not rated"}</span><span>{item.on === false ? "Inactive" : "Active"}</span></div>
@@ -811,8 +867,10 @@ export default function SquadSheet() {
     const addPlayer = () => {
       const name = draft.name.trim();
       if (!name) { setError("Enter a name."); return; }
-      setState((current) => ({ ...current, players: [...current.players, { id: `p${Date.now()}${Math.random().toString(36).slice(2, 5)}`, name, rating: draft.rating, spec: draft.spec, image: draft.image, cardStyle: draft.cardStyle, position: draft.position, flag: flagEmoji(draft.flag) }] }));
-      setDraft({ rating: 0, spec: "", name: "", image: "", cardStyle: "classic", position: "CM", flag: "🇵🇰" }); setError("");
+      const customOverall = draft.customOverall === "" ? undefined : normalizeCustomOverall(draft.customOverall);
+      if (draft.customOverall !== "" && customOverall === undefined) { setError("Custom OVR must be a whole number from 1 to 99."); return; }
+      setState((current) => ({ ...current, players: [...current.players, { id: `p${Date.now()}${Math.random().toString(36).slice(2, 5)}`, name, rating: draft.rating, customOverall, spec: draft.skills[0] || "", skills: draft.skills, image: draft.image, cardStyle: draft.cardStyle, position: draft.position, flag: flagEmoji(draft.flag) }] }));
+      setDraft({ rating: 0, customOverall: "", skills: [], name: "", image: "", cardStyle: "classic", position: "CM", flag: "🇵🇰" }); setError("");
     };
     const updatePlayer = (id: string, patch: Partial<Player>) => setState((current) => ({ ...current, players: current.players.map((item) => item.id === id ? { ...item, ...patch } : item), balancedTeams: current.balancedTeams ? { ...current.balancedTeams, cost: -1 } : null }));
     const togglePlayer = (id: string) => setState((current) => {
@@ -834,8 +892,10 @@ export default function SquadSheet() {
       {unlocked && <div className="sec"><h2>Add a player</h2>
         <label htmlFor="pn">Name</label><input id="pn" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Player name" autoComplete="off" />
         <label>Rating, 0.5–10 (optional)</label><RatingPicker value={draft.rating} onChange={(rating) => setDraft((current) => ({ ...current, rating }))} />
-        <label>Speciality (optional)</label><div className="cl">{SPECIALITIES.map((spec) => <button key={spec} onClick={() => setDraft({ ...draft, spec })} className={draft.spec === spec ? "on" : ""}>{spec}</button>)}</div>
-        <div className="player-details-row"><div><label htmlFor="position">Position</label><select id="position" value={draft.position} onChange={(e) => setDraft({ ...draft, position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label htmlFor="flag">Flag or country code</label><input id="flag" value={draft.flag} maxLength={8} onChange={(e) => setDraft({ ...draft, flag: e.target.value })} onBlur={() => setDraft((current) => ({ ...current, flag: flagEmoji(current.flag) }))} placeholder="🇵🇰 or PK" /></div></div>
+        <label htmlFor="custom-overall">Custom OVR (optional)</label><input id="custom-overall" type="number" inputMode="numeric" min="1" max="99" step="1" value={draft.customOverall} onChange={(event) => setDraft((current) => ({ ...current, customOverall: event.target.value }))} placeholder="Auto calculated" /><p className="note">Leave blank to calculate OVR automatically from the six stats.</p>
+        <label>Skills (choose up to {MAX_PLAYER_SKILLS})</label><SkillPicker skills={draft.skills} onChange={(skills) => setDraft((current) => ({ ...current, skills }))} />
+        <div className="player-details-row"><div><label htmlFor="position">Main position</label><select id="position" value={draft.position} onChange={(e) => setDraft({ ...draft, position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label htmlFor="flag">Flag or country code</label><input id="flag" value={draft.flag} maxLength={8} onChange={(e) => setDraft({ ...draft, flag: e.target.value })} onBlur={() => setDraft((current) => ({ ...current, flag: flagEmoji(current.flag) }))} placeholder="🇵🇰 or PK" /></div></div>
+        <p className="note">Main position is where the player is naturally best. Their assigned team position is changed separately on the formation map.</p>
         <label>Card design</label><div className="design-picker">{CARD_STYLES.map((style) => <button type="button" key={style.id} className={draft.cardStyle === style.id ? "on" : ""} onClick={() => setDraft({ ...draft, cardStyle: style.id })}><img src={style.src} alt="" /><span>{style.name}</span></button>)}</div>
         <label>Player photo (optional)</label><div className="photo-field">{draft.image ? <img src={draft.image} alt="New player preview" /> : <div className="mini-silhouette"><span /></div>}<label className="b line photo-button">{draft.image ? "Change photo" : "Add photo"}<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { setDraft({ ...draft, image: await preparePlayerImage(file) }); setError(""); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not add that image."); } e.target.value = ""; }} /></label>{draft.image && <button className="b line sm" onClick={() => setDraft({ ...draft, image: "" })}>Remove</button>}</div>
         <p className="note" aria-live="polite">{error}</p><button className="b pri" onClick={addPlayer}>Add player</button>
@@ -847,7 +907,21 @@ export default function SquadSheet() {
             <button className={`b sm ${item.on === false ? "line" : ""}`} onClick={() => togglePlayer(item.id)}>{item.on === false ? "Set active" : "Active"}</button>
             <button className="b sm line danger" onClick={() => deletePlayer(item.id)}>Delete</button>
           </> : undefined })}
-          {unlocked && editId === item.id && <div className="edit-block card-editor"><label htmlFor={`player-name-${item.id}`}>Player name</label><input id={`player-name-${item.id}`} defaultValue={item.name} maxLength={60} autoComplete="off" onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} onBlur={(event) => { const name = event.currentTarget.value.trim(); if (!name) { event.currentTarget.value = item.name; window.alert("Player name cannot be empty."); return; } if (name !== item.name) updatePlayer(item.id, { name }); }} /><label>Rating, 0.5–10</label><RatingPicker value={item.rating} onChange={(rating) => updatePlayer(item.id, { rating })} /><label>Speciality</label><div className="cl edit-specialities">{SPECIALITIES.map((spec) => <button key={spec} onClick={() => updatePlayer(item.id, { spec })} className={item.spec === spec ? "on" : ""}>{spec}</button>)}</div><div className="player-details-row"><div><label>Position</label><select value={defaultPosition(item)} onChange={(e) => updatePlayer(item.id, { position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label>Flag or country code</label><input value={item.flag || "🇵🇰"} maxLength={8} onChange={(e) => updatePlayer(item.id, { flag: e.target.value })} onBlur={(e) => updatePlayer(item.id, { flag: flagEmoji(e.currentTarget.value) })} placeholder="🇵🇰 or PK" /></div></div><label>Card design</label><div className="design-picker is-small">{CARD_STYLES.map((style) => <button type="button" key={style.id} className={(item.cardStyle || "classic") === style.id ? "on" : ""} onClick={() => updatePlayer(item.id, { cardStyle: style.id })}><img src={style.src} alt="" /><span>{style.name}</span></button>)}</div><label>Player photo</label><div className="photo-edit-row"><label className="b line sm photo-button">{item.image ? "Change photo" : "Add photo"}<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { updatePlayer(item.id, { image: await preparePlayerImage(file) }); } catch (reason) { window.alert(reason instanceof Error ? reason.message : "Could not add that image."); } e.target.value = ""; }} /></label>{item.image && <button className="b line sm" onClick={() => updatePlayer(item.id, { image: "" })}>Remove photo</button>}</div></div>}
+          {unlocked && editId === item.id && <div className="edit-block card-editor">
+            <label htmlFor={`player-name-${item.id}`}>Player name</label>
+            <input id={`player-name-${item.id}`} defaultValue={item.name} maxLength={60} autoComplete="off" onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} onBlur={(event) => { const name = event.currentTarget.value.trim(); if (!name) { event.currentTarget.value = item.name; window.alert("Player name cannot be empty."); return; } if (name !== item.name) updatePlayer(item.id, { name }); }} />
+            <label>Rating, 0.5–10</label>
+            <RatingPicker value={item.rating} onChange={(rating) => updatePlayer(item.id, { rating })} />
+            <label htmlFor={`custom-overall-${item.id}`}>Custom OVR (optional)</label>
+            <input id={`custom-overall-${item.id}`} type="number" inputMode="numeric" min="1" max="99" step="1" defaultValue={item.customOverall || ""} placeholder="Auto calculated" onBlur={(event) => { const value = event.currentTarget.value.trim(); const customOverall = value ? normalizeCustomOverall(value) : undefined; if (value && customOverall === undefined) { event.currentTarget.value = item.customOverall ? String(item.customOverall) : ""; window.alert("Custom OVR must be a whole number from 1 to 99."); return; } updatePlayer(item.id, { customOverall }); }} />
+            <p className="note">Leave blank to calculate OVR automatically from the six stats.</p>
+            <label>Skills (choose up to {MAX_PLAYER_SKILLS})</label>
+            <SkillPicker skills={playerSkills(item)} onChange={(skills) => updatePlayer(item.id, { skills, spec: skills[0] || "" })} />
+            <div className="player-details-row"><div><label>Main position</label><select value={defaultPosition(item)} onChange={(e) => updatePlayer(item.id, { position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label>Flag or country code</label><input value={item.flag || "🇵🇰"} maxLength={8} onChange={(e) => updatePlayer(item.id, { flag: e.target.value })} onBlur={(e) => updatePlayer(item.id, { flag: flagEmoji(e.currentTarget.value) })} placeholder="🇵🇰 or PK" /></div></div>
+            <p className="note">This changes the player&apos;s natural position only. Team lineup positions stay unchanged.</p>
+            <label>Card design</label><div className="design-picker is-small">{CARD_STYLES.map((style) => <button type="button" key={style.id} className={(item.cardStyle || "classic") === style.id ? "on" : ""} onClick={() => updatePlayer(item.id, { cardStyle: style.id })}><img src={style.src} alt="" /><span>{style.name}</span></button>)}</div>
+            <label>Player photo</label><div className="photo-edit-row"><label className="b line sm photo-button">{item.image ? "Change photo" : "Add photo"}<input type="file" accept="image/*" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; try { updatePlayer(item.id, { image: await preparePlayerImage(file) }); } catch (reason) { window.alert(reason instanceof Error ? reason.message : "Could not add that image."); } e.target.value = ""; }} /></label>{item.image && <button className="b line sm" onClick={() => updatePlayer(item.id, { image: "" })}>Remove photo</button>}</div>
+          </div>}
         </div>)}</div> : <div className="empty">No players yet.</div>}
       </div>
     </>;
