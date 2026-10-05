@@ -645,22 +645,25 @@ export default function SquadSheet() {
     if (!state.balancedTeams) return null;
     const selected = formationTeam === 1 ? state.balancedTeams.team1 : state.balancedTeams.team2;
     const selectedPlayer = selected.ids.includes(formationPlayerId) ? player(formationPlayerId) : undefined;
-    const lines = [
-      { key: "forward", positions: ["ST", "CF"] },
-      { key: "attack", positions: ["LW", "CAM", "RW"] },
-      { key: "midfield", positions: ["LM", "CM", "CDM", "RM"] },
-      { key: "defence", positions: ["LB", "CB", "RB"] },
-      { key: "goalkeeper", positions: ["GK"] },
-    ];
-    const used = new Set<string>();
-    const rows = lines.map((line) => ({ ...line, ids: selected.ids.filter((id) => { const matches = line.positions.includes(selected.positions[id] || "CM"); if (matches) used.add(id); return matches; }) }));
-    const unplaced = selected.ids.filter((id) => !used.has(id));
-    if (unplaced.length) rows[2].ids.push(...unplaced);
-    const miniCard = (id: string) => {
+    const rowFor = (position: string) => ["ST", "CF"].includes(position) ? 12 : ["LW", "CAM", "RW"].includes(position) ? 31 : ["LM", "CM", "CDM", "RM"].includes(position) ? 50 : ["LB", "CB", "RB"].includes(position) ? 70 : position === "GK" ? 88 : 50;
+    const fixedX = (position: string) => ({ LW: 13, LM: 11, LB: 11, RW: 87, RM: 89, RB: 89 } as Record<string, number>)[position];
+    const positioned = selected.ids.map((id) => ({ id, position: selected.positions[id] || defaultPosition(player(id) || { id, name: "Player", rating: 0, spec: "" }) }));
+    const placements: Array<{ id: string; x: number; y: number }> = [];
+    for (const y of [12, 31, 50, 70, 88]) {
+      const row = positioned.filter((item) => rowFor(item.position) === y);
+      const central = row.filter((item) => fixedX(item.position) === undefined);
+      row.filter((item) => fixedX(item.position) !== undefined).forEach((item) => placements.push({ id: item.id, x: fixedX(item.position), y }));
+      const leftOccupied = row.some((item) => (fixedX(item.position) || 50) < 50);
+      const rightOccupied = row.some((item) => (fixedX(item.position) || 50) > 50);
+      const minimum = leftOccupied ? 34 : central.length > 1 ? 34 : 50;
+      const maximum = rightOccupied ? 66 : central.length > 1 ? 66 : 50;
+      central.forEach((item, index) => placements.push({ id: item.id, x: central.length === 1 ? 50 : minimum + (maximum - minimum) * index / (central.length - 1), y }));
+    }
+    const miniCard = ({ id, x, y }: { id: string; x: number; y: number }) => {
       const item = player(id); if (!item) return null;
       const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
       const assignedPosition = selected.positions[id] || defaultPosition(item);
-      return <button type="button" className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}`} key={id} onClick={() => setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
+      return <button type="button" className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onClick={() => setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
         <img className="formation-mini-frame" src={item.image ? design.cleanSrc : design.src} alt="" />
         {item.image && <img className="formation-mini-photo" src={item.image} alt="" />}
         <span className="formation-mini-position">{assignedPosition}</span>
@@ -670,8 +673,8 @@ export default function SquadSheet() {
     };
     return <section className="formation-board">
       <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {selected.ids.length} players · {formationLabel(selected.positions)}</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
-      <div className="formation-pitch"><span className="pitch-box pitch-box-top" /><span className="pitch-box pitch-box-bottom" />{rows.map((row) => <div className={`formation-line formation-line-${row.key}`} key={row.key}>{row.ids.map(miniCard)}</div>)}</div>
-      {selectedPlayer && <div className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><button className="b line sm" onClick={() => setFormationPlayerId("")}>Close</button></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: selected.positions[selectedPlayer.id] })}</div>}
+      <div className={`formation-stage${selectedPlayer ? " has-selection" : ""}`}><div className="formation-pitch"><span className="pitch-box pitch-box-top" /><span className="pitch-box pitch-box-bottom" />{placements.map(miniCard)}</div>
+      {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><button className="b line sm" onClick={() => setFormationPlayerId("")}>Close</button></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: selected.positions[selectedPlayer.id] })}</aside>}</div>
     </section>;
   }
 
