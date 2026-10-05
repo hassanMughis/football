@@ -24,9 +24,11 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 ```
 
-Run `supabase/schema.sql` in the project's Supabase SQL Editor once. It creates the legacy roster tables, save function, public `player-images` bucket, and anonymous policies used by this shared app.
+For a new project, run `supabase/schema.sql` first. Then run `supabase/rich-player-migration.sql`. For the existing project, only the rich-player migration is needed now.
 
-Check tables and Storage write/delete access with:
+The migration stores every card field directly in `players`: stable player ID, name, 0–10 rating, speciality, card style, position, flag, photo URL, availability, balanced-team assignment, match-squad/captain state, OVR, and PAC/SHO/PAS/DRI/DEF/PHY. Scorers, assists, and minutes are stored in `match_events`; the remaining UI/match state is stored in `squad_settings.app_state`.
+
+After running the migration, check all rich tables and Storage write/delete access with:
 
 ```sh
 node scripts/check-supabase.mjs

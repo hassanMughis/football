@@ -125,7 +125,7 @@ const legacySquadState = (value: unknown): AppState | null => {
   const players: Player[] = legacy.players.map((item) => ({
     id: `db-${item.id}`,
     name: item.name,
-    rating: legacyRatingToStars(item.rating),
+    rating: item.rating <= 10 ? Math.max(0, item.rating) : legacyRatingToStars(item.rating),
     spec: "",
     image: item.imageUrl || undefined,
     cardStyle: "classic",

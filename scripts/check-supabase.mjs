@@ -12,7 +12,11 @@ const url = configuration.NEXT_PUBLIC_SUPABASE_URL;
 const key = configuration.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 if (!url || !key) throw new Error("Supabase environment variables are missing.");
 
-for (const path of ["players?select=id&limit=1", "squad_settings?select=id&limit=1"]) {
+for (const path of [
+  "players?select=id,client_id,rating,speciality,card_style,position,flag,overall,pac,sho,pas,dri,def,phy,in_match_squad,is_captain&limit=1",
+  "squad_settings?select=id,app_state,match_team_name,opponent_name,opponent_goals,match_status&limit=1",
+  "match_events?select=id,scorer_client_id,assist_client_id,minute&limit=1",
+]) {
   const response = await fetch(`${url}/rest/v1/${path}`, { headers: { apikey: key } });
   const result = await response.json();
   console.log(JSON.stringify({ resource: path.split("?")[0], status: response.status, result }));
