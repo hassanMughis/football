@@ -68,8 +68,8 @@ where rating > 0 and pac is null;
 update public.players set overall = round((pac + sho + pas + dri + def + phy) / 6.0)::integer
 where rating > 0 and overall is null;
 
-alter table public.squad_settings add column if not exists match_team_name text not null default 'My Team';
-alter table public.squad_settings add column if not exists opponent_name text not null default 'Opponents';
+alter table public.squad_settings add column if not exists match_team_name text not null default 'Team 1';
+alter table public.squad_settings add column if not exists opponent_name text not null default 'Team 2';
 alter table public.squad_settings add column if not exists opponent_goals integer not null default 0;
 alter table public.squad_settings add column if not exists match_status text not null default 'Live';
 alter table public.squad_settings add column if not exists motm_client_id text;
@@ -84,6 +84,29 @@ create table if not exists public.match_events (
   created_at timestamptz not null default now()
 );
 
+alter table public.match_events add column if not exists team_number integer not null default 1;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'match_events_team_number_check' and conrelid = 'public.match_events'::regclass) then
+    alter table public.match_events add constraint match_events_team_number_check check (team_number in (1, 2));
+  end if;
+end $$;
+
+create table if not exists public.match_history (
+  history_id text primary key,
+  ended_at timestamptz not null,
+  team1_name text not null,
+  team2_name text not null,
+  team1_captain_id text,
+  team2_captain_id text,
+  team1_players jsonb not null default '[]'::jsonb,
+  team2_players jsonb not null default '[]'::jsonb,
+  score1 integer not null default 0,
+  score2 integer not null default 0,
+  goals jsonb not null default '[]'::jsonb,
+  motm_client_id text,
+  snapshot jsonb not null
+);
+
 alter table public.match_events enable row level security;
 drop policy if exists "public match events read" on public.match_events;
 drop policy if exists "public match events write" on public.match_events;
@@ -91,6 +114,13 @@ create policy "public match events read" on public.match_events for select to an
 create policy "public match events write" on public.match_events for all to anon using (true) with check (true);
 grant select, insert, update, delete on public.match_events to anon;
 grant usage, select on sequence public.match_events_id_seq to anon;
+
+alter table public.match_history enable row level security;
+drop policy if exists "public match history read" on public.match_history;
+drop policy if exists "public match history write" on public.match_history;
+create policy "public match history read" on public.match_history for select to anon using (true);
+create policy "public match history write" on public.match_history for all to anon using (true) with check (true);
+grant select, insert, update, delete on public.match_history to anon;
 
 create or replace function public.set_player_updated_at()
 returns trigger language plpgsql as $$
@@ -108,6 +138,7 @@ returns void language plpgsql security invoker set search_path = public as $$
 declare
   item jsonb;
   match_event jsonb;
+  history_item jsonb;
   ordinal integer := 0;
   event_ordinal integer := 0;
   player_id text;
@@ -124,6 +155,7 @@ begin
   perform pg_advisory_xact_lock(7312905);
   -- Supabase projects with the safe-update extension require an explicit WHERE.
   delete from public.match_events where true;
+  delete from public.match_history where true;
 
   for item in select value from jsonb_array_elements(p_state->'players') loop
     player_id := btrim(item->>'id');
@@ -149,7 +181,9 @@ begin
         else 0
       end,
       coalesce(p_state #> '{team,ids}', '[]'::jsonb) ? player_id,
-      coalesce(p_state #>> '{team,captain}', '') = player_id,
+      coalesce(p_state #>> '{balancedTeams,team1,captain}', '') = player_id
+        or coalesce(p_state #>> '{balancedTeams,team2,captain}', '') = player_id
+        or coalesce(p_state #>> '{team,captain}', '') = player_id,
       nullif(item #>> '{cardStats,OVR}', '')::integer,
       nullif(item #>> '{cardStats,PAC}', '')::integer,
       nullif(item #>> '{cardStats,SHO}', '')::integer,
@@ -180,14 +214,38 @@ begin
     assist_id := nullif(match_event->>'a', '');
     if scorer_id is not null and exists (select 1 from public.players where client_id = scorer_id) then
       if assist_id is not null and not exists (select 1 from public.players where client_id = assist_id) then assist_id := null; end if;
-      insert into public.match_events (scorer_client_id, assist_client_id, minute, event_order)
+      insert into public.match_events (scorer_client_id, assist_client_id, minute, team_number, event_order)
       values (
         scorer_id,
         assist_id,
         case when jsonb_typeof(match_event->'m') = 'number' then (match_event->>'m')::integer else null end,
+        case when match_event->>'team' = '2' then 2 else 1 end,
         event_ordinal
       );
       event_ordinal := event_ordinal + 1;
+    end if;
+  end loop;
+
+  for history_item in select value from jsonb_array_elements(coalesce(p_state->'history', '[]'::jsonb)) loop
+    if nullif(history_item->>'id', '') is not null and nullif(history_item->>'endedAt', '') is not null then
+      insert into public.match_history (
+        history_id, ended_at, team1_name, team2_name, team1_captain_id, team2_captain_id,
+        team1_players, team2_players, score1, score2, goals, motm_client_id, snapshot
+      ) values (
+        history_item->>'id',
+        (history_item->>'endedAt')::timestamptz,
+        coalesce(nullif(history_item #>> '{team1,name}', ''), 'Team 1'),
+        coalesce(nullif(history_item #>> '{team2,name}', ''), 'Team 2'),
+        nullif(history_item #>> '{team1,captain}', ''),
+        nullif(history_item #>> '{team2,captain}', ''),
+        coalesce(history_item #> '{team1,players}', '[]'::jsonb),
+        coalesce(history_item #> '{team2,players}', '[]'::jsonb),
+        coalesce((history_item->>'score1')::integer, 0),
+        coalesce((history_item->>'score2')::integer, 0),
+        coalesce(history_item->'goals', '[]'::jsonb),
+        nullif(history_item->>'motm', ''),
+        history_item
+      );
     end if;
   end loop;
 
@@ -198,8 +256,8 @@ begin
     1,
     coalesce(nullif(p_state #>> '{balancedTeams,team1,name}', ''), 'Team 1'),
     coalesce(nullif(p_state #>> '{balancedTeams,team2,name}', ''), 'Team 2'),
-    coalesce(nullif(p_state #>> '{match,us}', ''), 'My Team'),
-    coalesce(nullif(p_state #>> '{match,opp}', ''), 'Opponents'),
+    coalesce(nullif(p_state #>> '{match,us}', ''), 'Team 1'),
+    coalesce(nullif(p_state #>> '{match,opp}', ''), 'Team 2'),
     coalesce((p_state #>> '{match,them}')::integer, 0),
     case when p_state #>> '{match,st}' = 'Full-time' then 'Full-time' else 'Live' end,
     nullif(p_state #>> '{match,motm}', ''),
