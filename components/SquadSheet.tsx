@@ -647,18 +647,18 @@ export default function SquadSheet() {
     if (!state.balancedTeams) return null;
     const selected = formationTeam === 1 ? state.balancedTeams.team1 : state.balancedTeams.team2;
     const selectedPlayer = selected.ids.includes(formationPlayerId) ? player(formationPlayerId) : undefined;
-    const rowFor = (position: string) => ["ST", "CF"].includes(position) ? 11 : ["LW", "CAM", "RW"].includes(position) ? 29 : ["LM", "CM", "RM"].includes(position) ? 45 : position === "CDM" ? 58 : ["LB", "CB", "RB"].includes(position) ? 73 : position === "GK" ? 89 : 45;
+    const rowFor = (position: string) => ["ST", "CF"].includes(position) ? 12 : ["LW", "CAM", "RW"].includes(position) ? 31 : ["LM", "CM", "CDM", "RM"].includes(position) ? 50 : ["LB", "CB", "RB"].includes(position) ? 70 : position === "GK" ? 88 : 50;
     const fixedX = (position: string) => ({ LW: 13, LM: 11, LB: 11, RW: 87, RM: 89, RB: 89 } as Record<string, number>)[position];
     const placeItems = (items: Array<{ id: string; position: string }>) => {
       const result: Array<{ id: string; position: string; x: number; y: number }> = [];
-      for (const y of [11, 29, 45, 58, 73, 89]) {
+      for (const y of [12, 31, 50, 70, 88]) {
         const row = items.filter((item) => rowFor(item.position) === y);
         const central = row.filter((item) => fixedX(item.position) === undefined);
         row.filter((item) => fixedX(item.position) !== undefined).forEach((item) => result.push({ ...item, x: fixedX(item.position), y }));
         const leftOccupied = row.some((item) => (fixedX(item.position) || 50) < 50);
         const rightOccupied = row.some((item) => (fixedX(item.position) || 50) > 50);
-        const minimum = leftOccupied ? 39 : central.length > 1 ? 36 : 50;
-        const maximum = rightOccupied ? 61 : central.length > 1 ? 64 : 50;
+        const minimum = leftOccupied ? 34 : central.length > 1 ? 34 : 50;
+        const maximum = rightOccupied ? 66 : central.length > 1 ? 66 : 50;
         central.forEach((item, index) => result.push({ ...item, x: central.length === 1 ? 50 : minimum + (maximum - minimum) * index / (central.length - 1), y }));
       }
       return result;
