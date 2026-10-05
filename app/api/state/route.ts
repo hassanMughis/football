@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 const stateObjectPath = "player-images/squad-sheet/app-state.json";
 const statNames = ["PAC", "SHO", "PAS", "DRI", "DEF", "PHY"] as const;
-const specialities = new Set(["", "Passing", "Scoring", "Shooting", "Dribbling", "Teamwork"]);
+const specialities = new Set(["", "Passing", "Scoring", "Shooting", "Dribbling", "Teamwork", "Goalkeeping", "Defending", "Pace", "Strength", "Heading"]);
 const cardStyles = new Set(["classic", "royal", "electric", "crimson"]);
 const positions = new Set(["GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST"]);
 
@@ -70,6 +70,12 @@ function generatedStats(player: JsonObject) {
     if (speciality === "Passing" && label === "PAS") return 6;
     if (speciality === "Dribbling" && label === "DRI") return 6;
     if (speciality === "Teamwork" && (label === "PAS" || label === "PHY")) return 4;
+    if (speciality === "Goalkeeping" && label === "DEF") return 6;
+    if (speciality === "Goalkeeping" && label === "PHY") return 4;
+    if (speciality === "Defending" && label === "DEF") return 6;
+    if (speciality === "Pace" && label === "PAC") return 6;
+    if (speciality === "Strength" && label === "PHY") return 6;
+    if (speciality === "Heading" && (label === "SHO" || label === "PHY")) return 3;
     return 0;
   };
   const offsets = { PAC: 1, SHO: -1, PAS: 0, DRI: 2, DEF: -8, PHY: -3 } as const;
@@ -90,7 +96,7 @@ function validateAndEnrichState(value: unknown) {
     if (!name || name.length > 60) throw new Error("Player names must be between 1 and 60 characters.");
     if (!Number.isInteger(rating) || rating < 0 || rating > 10) throw new Error("Player ratings must be between 0 and 10.");
     const spec = specialities.has(String(candidate.spec || "")) ? String(candidate.spec || "") : "";
-    const defaultPosition = ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM" } as Record<string, string>)[spec] || "CM";
+    const defaultPosition = ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" } as Record<string, string>)[spec] || "CM";
     const position = positions.has(String(candidate.position || "")) ? String(candidate.position) : defaultPosition;
     const cardStyle = cardStyles.has(String(candidate.cardStyle || "")) ? String(candidate.cardStyle) : "classic";
     const flag = flagEmoji(candidate.flag);

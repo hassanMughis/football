@@ -36,9 +36,8 @@ do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'players_rating_check' and conrelid = 'public.players'::regclass) then
     alter table public.players add constraint players_rating_check check (rating between 0 and 10);
   end if;
-  if not exists (select 1 from pg_constraint where conname = 'players_speciality_check' and conrelid = 'public.players'::regclass) then
-    alter table public.players add constraint players_speciality_check check (speciality in ('', 'Passing', 'Scoring', 'Shooting', 'Dribbling', 'Teamwork'));
-  end if;
+  alter table public.players drop constraint if exists players_speciality_check;
+  alter table public.players add constraint players_speciality_check check (speciality in ('', 'Passing', 'Scoring', 'Shooting', 'Dribbling', 'Teamwork', 'Goalkeeping', 'Defending', 'Pace', 'Strength', 'Heading'));
   if not exists (select 1 from pg_constraint where conname = 'players_card_style_check' and conrelid = 'public.players'::regclass) then
     alter table public.players add constraint players_card_style_check check (card_style in ('classic', 'royal', 'electric', 'crimson'));
   end if;

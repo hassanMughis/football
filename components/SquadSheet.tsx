@@ -2,13 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-const SPECIALITIES = ["Passing", "Scoring", "Shooting", "Dribbling", "Teamwork"] as const;
+const SPECIALITIES = ["Passing", "Scoring", "Shooting", "Dribbling", "Teamwork", "Goalkeeping", "Defending", "Pace", "Strength", "Heading"] as const;
 const SKILL_BADGES: Record<string, string> = {
   Passing: "/badges/skills/passing.png",
   Scoring: "/badges/skills/scoring.png",
   Shooting: "/badges/skills/shooting.png",
   Dribbling: "/badges/skills/dribbling.png",
   Teamwork: "/badges/skills/teamwork.png",
+  Goalkeeping: "/badges/skills/goalkeeping.png",
+  Defending: "/badges/skills/defending.png",
+  Pace: "/badges/skills/pace.png",
+  Strength: "/badges/skills/strength.png",
+  Heading: "/badges/skills/heading.png",
 };
 const POSITIONS = ["GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST"] as const;
 const CARD_STYLES = [
@@ -193,7 +198,7 @@ const ratingLabel = (player: Player) => player.rating ? `${player.rating}/10` : 
 const specialityLabel = (player: Player) => player.spec || "No speciality";
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((word) => word[0] || "").join("").toUpperCase() || "?";
 const sortPlayers = (players: Player[]) => [...players].sort((a, b) => b.rating - a.rating || Number(b.spec === "Teamwork") - Number(a.spec === "Teamwork") || a.name.localeCompare(b.name));
-const defaultPosition = (player: Player) => player.position || ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM" }[player.spec] || "CM");
+const defaultPosition = (player: Player) => player.position || ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" }[player.spec] || "CM");
 const generatedCardStats = (player: Player) => {
   if (!player.rating) return [["PAC", "–"], ["SHO", "–"], ["PAS", "–"], ["DRI", "–"], ["DEF", "–"], ["PHY", "–"]];
   const base = 44 + player.rating * 5;
@@ -202,6 +207,12 @@ const generatedCardStats = (player: Player) => {
     if (player.spec === "Passing" && label === "PAS") return 6;
     if (player.spec === "Dribbling" && label === "DRI") return 6;
     if (player.spec === "Teamwork" && (label === "PAS" || label === "PHY")) return 4;
+    if (player.spec === "Goalkeeping" && label === "DEF") return 6;
+    if (player.spec === "Goalkeeping" && label === "PHY") return 4;
+    if (player.spec === "Defending" && label === "DEF") return 6;
+    if (player.spec === "Pace" && label === "PAC") return 6;
+    if (player.spec === "Strength" && label === "PHY") return 6;
+    if (player.spec === "Heading" && (label === "SHO" || label === "PHY")) return 3;
     return 0;
   };
   const value = (label: string, offset: number) => String(Math.max(1, Math.min(99, base + offset + boost(label))));
@@ -250,6 +261,11 @@ const positionFit = (item: Player, slot: string) => {
   if ((item.spec === "Scoring" || item.spec === "Shooting") && family === "attack") score += 20;
   if (item.spec === "Dribbling" && ["LW", "RW", "CAM"].includes(slot)) score += 20;
   if (item.spec === "Teamwork" && ["CDM", "CM", "CB"].includes(slot)) score += 14;
+  if (item.spec === "Goalkeeping" && slot === "GK") score += 30;
+  if (item.spec === "Defending" && family === "defence") score += 20;
+  if (item.spec === "Pace" && ["LW", "RW", "LM", "RM", "LB", "RB", "ST"].includes(slot)) score += 18;
+  if (item.spec === "Strength" && ["CB", "CDM", "ST"].includes(slot)) score += 18;
+  if (item.spec === "Heading" && ["CB", "CF", "ST"].includes(slot)) score += 18;
   return score;
 };
 
