@@ -204,6 +204,7 @@ const formationSlots = (count: number) => {
   const extras = ["CM", "CB", "ST", "LW", "RW"];
   return [...FORMATION_SLOTS[11], ...Array.from({ length: count - 11 }, (_, index) => extras[index % extras.length])];
 };
+const FULL_FORMATION_SLOTS = FORMATION_SLOTS[11];
 
 const positionFamily = (position: string) => {
   if (position === "GK") return "goalkeeper";
@@ -248,7 +249,7 @@ const normalizeLineupPositions = (roster: Player[], saved: LineupPositions): Lin
   const validSaved = Object.fromEntries(Object.entries(saved || {}).filter(([id, position]) => roster.some((item) => item.id === id) && POSITIONS.includes(position as typeof POSITIONS[number])));
   const merged = { ...automatic, ...validSaved };
   const counts = Object.values(merged).reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
-  const allowed = formationSlots(roster.length).reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
+  const allowed = FULL_FORMATION_SLOTS.reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
   const invalid = (roster.length > 0 && counts.GK !== 1) || Object.entries(counts).some(([position, count]) => count > Math.max(1, allowed[position] || 0));
   return invalid ? automatic : merged;
 };
@@ -665,7 +666,7 @@ export default function SquadSheet() {
     const positioned = selected.ids.map((id) => ({ id, position: selected.positions[id] || defaultPosition(player(id) || { id, name: "Player", rating: 0, spec: "" }) }));
     const placements = placeItems(positioned);
     const positionUse = new Map<string, number>();
-    const slotItems = formationSlots(selected.ids.length).map((position) => { const occurrence = positionUse.get(position) || 0; positionUse.set(position, occurrence + 1); return { id: `slot-${position}-${occurrence}`, position, occurrence }; });
+    const slotItems = FULL_FORMATION_SLOTS.map((position) => { const occurrence = positionUse.get(position) || 0; positionUse.set(position, occurrence + 1); return { id: `slot-${position}-${occurrence}`, position, occurrence }; });
     const slotPlacements = placeItems(slotItems).map((slot) => ({ ...slot, occurrence: Number(slot.id.split("-").at(-1) || 0), occupantId: selected.ids.filter((id) => (selected.positions[id] || defaultPosition(player(id)!)) === slot.position)[Number(slot.id.split("-").at(-1) || 0)] || "" }));
     const moveFormationPlayer = (id: string, position: string, occupantId = "") => {
       if (!id || !selected.ids.includes(id)) return;
@@ -695,7 +696,7 @@ export default function SquadSheet() {
       </button>;
     };
     return <section className="formation-board">
-      <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {selected.ids.length} players · {formationLabel(selected.positions)} · Drag cards to swap positions</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
+      <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {selected.ids.length}/11 positions filled · Empty positions remain available · Drag cards to move or swap</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
       <div className={`formation-stage${selectedPlayer ? " has-selection" : ""}`}><div className={`formation-pitch${draggedFormationId ? " is-moving" : ""}`}><span className="pitch-box pitch-box-top" /><span className="pitch-box pitch-box-bottom" />{slotPlacements.map((slot) => <button type="button" className="formation-slot" style={{ "--formation-x": `${slot.x}%`, "--formation-y": `${slot.y}%` } as React.CSSProperties} key={slot.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, slot.position, slot.occupantId); }} onClick={() => draggedFormationId && moveFormationPlayer(draggedFormationId, slot.position, slot.occupantId)} aria-label={`Move selected player to ${slot.position}`}><span>{slot.position}</span></button>)}{placements.map(miniCard)}</div>
       {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><div className="formation-move-actions"><button className={`b sm ${draggedFormationId === selectedPlayer.id ? "pri" : "line"}`} onClick={() => setDraggedFormationId(draggedFormationId === selectedPlayer.id ? "" : selectedPlayer.id)}>{draggedFormationId === selectedPlayer.id ? "Cancel move" : "Move"}</button><button className="b line sm" onClick={() => { setFormationPlayerId(""); setDraggedFormationId(""); }}>Close</button></div></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: selected.positions[selectedPlayer.id] })}</aside>}</div>
     </section>;
@@ -925,7 +926,7 @@ export default function SquadSheet() {
       const previousPosition = selected.positions[id] || "CM";
       if (previousPosition === position) return current;
       const positions = { ...selected.positions };
-      const allowedCount = Math.max(1, formationSlots(selected.ids.length).filter((slot) => slot === position).length);
+      const allowedCount = Math.max(1, FULL_FORMATION_SLOTS.filter((slot) => slot === position).length);
       const occupants = selected.ids.filter((playerId) => playerId !== id && positions[playerId] === position);
       if (occupants.length >= allowedCount) positions[occupants[0]] = previousPosition;
       else if (previousPosition === "GK" && position !== "GK") {
