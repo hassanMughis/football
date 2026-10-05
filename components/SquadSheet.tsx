@@ -74,6 +74,16 @@ const flagEmoji = (value?: string) => {
   return [...flag.toUpperCase()].map((letter) => String.fromCodePoint(0x1f1e6 + letter.charCodeAt(0) - 65)).join("");
 };
 
+const flagCountryCode = (value?: string) => {
+  const flag = value?.trim() || "PK";
+  if (/^[a-z]{2}$/i.test(flag)) return flag.toUpperCase();
+  const symbols = [...flag];
+  if (symbols.length !== 2) return "";
+  const points = symbols.map((symbol) => symbol.codePointAt(0) || 0);
+  if (points.some((point) => point < 0x1f1e6 || point > 0x1f1ff)) return "";
+  return points.map((point) => String.fromCharCode(65 + point - 0x1f1e6)).join("");
+};
+
 const initialState = (): AppState => ({
   players: SEED.map((name, i) => ({ id: `s${i}`, name, rating: 0, spec: "", cardStyle: "classic" })),
   want: 0,
@@ -630,13 +640,15 @@ export default function SquadSheet() {
 
   function PlayerCard({ item, children, compact = false, positionOverride }: { item: Player; children?: React.ReactNode; compact?: boolean; positionOverride?: string }) {
     const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
+    const flagCode = flagCountryCode(item.flag);
+    const flagSrc = flagCode === "PK" ? "/flags/pk.svg" : flagCode ? `https://flagcdn.com/w40/${flagCode.toLowerCase()}.png` : "";
     const cardStats = generatedCardStats(item);
     const numericStats = cardStats.map(([, value]) => Number(value)).filter(Number.isFinite);
     const overall = numericStats.length ? Math.round(numericStats.reduce((sum, value) => sum + value, 0) / numericStats.length) : "–";
     return <article className={`player-card${item.on === false ? " is-inactive" : ""}${compact ? " is-compact" : ""}`}>
       <div className={`player-card__visual card-theme-${design.id}`}>
         <img className="player-card__frame" src={item.image ? design.cleanSrc : design.src} alt="" aria-hidden="true" />
-        <div className="player-card__strip"><strong>{overall}</strong><span>{positionOverride || defaultPosition(item)}</span><span className="player-card__flag" aria-label="Country flag">{flagEmoji(item.flag)}</span><img src="/badges/squad-sheet-fc.png" alt="Squad Sheet FC badge" /></div>
+        <div className="player-card__strip"><strong>{overall}</strong><span>{positionOverride || defaultPosition(item)}</span><span className="player-card__flag">{flagSrc ? <img src={flagSrc} alt={`${flagCode} flag`} /> : flagEmoji(item.flag)}</span><img src="/badges/squad-sheet-fc.png" alt="Squad Sheet FC badge" /></div>
         <div className="player-card__photo">
           {item.image && <img src={item.image} alt={`${item.name} portrait`} />}
         </div>

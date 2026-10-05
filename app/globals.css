@@ -135,6 +135,8 @@ table { width:100%; border-collapse:collapse; }th,td { padding:10px 4px; text-al
 .player-card__strip > span:not(.player-card__flag) { font-size:clamp(9px,2vw,12px); line-height:1; font-weight:800; letter-spacing:.05em; }
 .player-card__flag { margin-top:5px; font-size:clamp(17px,4.2vw,23px); line-height:1; filter:drop-shadow(0 1px 2px rgba(0,0,0,.45)); }
 .player-card__strip img { width:clamp(24px,6vw,32px); height:clamp(24px,6vw,32px); margin-top:4px; object-fit:contain; filter:drop-shadow(0 2px 3px rgba(0,0,0,.48)); }
+.player-card__flag:has(img) { display:block; width:clamp(25px,5.8vw,32px); height:clamp(16px,3.8vw,21px); margin-top:6px; overflow:hidden; border:1px solid rgba(255,255,255,.65); border-radius:2px; background:#fff; filter:drop-shadow(0 2px 3px rgba(0,0,0,.45)); }
+.player-card__flag img { display:block; width:100%; height:100%; margin:0; object-fit:cover; filter:none; }
 .card-theme-classic .player-card__strip,.card-theme-royal .player-card__strip { color:#2d2105; text-shadow:0 1px 2px rgba(255,255,255,.65); background:linear-gradient(180deg,rgba(255,224,116,0),rgba(221,166,49,.36) 30%,rgba(174,112,14,.3) 72%,rgba(105,68,5,.17)); border-color:rgba(255,243,184,.18); box-shadow:0 4px 10px rgba(72,43,0,.12),inset 0 0 9px rgba(255,250,208,.1); }
 .card-theme-classic .player-card__strip strong,.card-theme-royal .player-card__strip strong { color:#302203; }
 .card-theme-electric .player-card__strip { background:linear-gradient(180deg,rgba(20,112,224,0),rgba(9,72,174,.38) 30%,rgba(5,48,130,.32) 72%,rgba(1,17,58,.18)); border-color:rgba(122,224,255,.16); box-shadow:0 4px 10px rgba(0,20,70,.14),inset 0 0 9px rgba(75,211,255,.08); }
