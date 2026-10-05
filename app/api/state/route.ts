@@ -192,9 +192,10 @@ export async function PUT(request: Request) {
         body: JSON.stringify({ p_state: state }),
       });
       return Response.json({ state, source: "database" });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (!/finish setting up the database|Run supabase\/schema\.sql/i.test(message)) throw error;
+    } catch {
+      // Keep the app usable while the rich-table migration is pending or if a
+      // database policy/function is temporarily unavailable. Storage is still
+      // Supabase-backed and the next successful save will populate the tables.
       await writeStorageState(state);
       return Response.json({ state, source: "storage" });
     }

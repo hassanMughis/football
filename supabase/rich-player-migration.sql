@@ -122,7 +122,8 @@ begin
   end if;
 
   perform pg_advisory_xact_lock(7312905);
-  delete from public.match_events;
+  -- Supabase projects with the safe-update extension require an explicit WHERE.
+  delete from public.match_events where true;
 
   for item in select value from jsonb_array_elements(p_state->'players') loop
     player_id := btrim(item->>'id');
