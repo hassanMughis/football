@@ -54,6 +54,12 @@ function numberValue(value: unknown, fallback = 0) {
   return Number.isFinite(result) ? result : fallback;
 }
 
+function flagEmoji(value: unknown) {
+  const flag = typeof value === "string" && value.trim() ? value.trim().slice(0, 16) : "PK";
+  if (!/^[a-z]{2}$/i.test(flag)) return flag;
+  return [...flag.toUpperCase()].map((letter) => String.fromCodePoint(0x1f1e6 + letter.charCodeAt(0) - 65)).join("");
+}
+
 function generatedStats(player: JsonObject) {
   const rating = Math.max(0, Math.min(10, Math.round(numberValue(player.rating))));
   const speciality = typeof player.spec === "string" ? player.spec : "";
@@ -87,7 +93,7 @@ function validateAndEnrichState(value: unknown) {
     const defaultPosition = ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM" } as Record<string, string>)[spec] || "CM";
     const position = positions.has(String(candidate.position || "")) ? String(candidate.position) : defaultPosition;
     const cardStyle = cardStyles.has(String(candidate.cardStyle || "")) ? String(candidate.cardStyle) : "classic";
-    const flag = typeof candidate.flag === "string" && candidate.flag.trim() ? candidate.flag.trim().slice(0, 16) : "🇵🇰";
+    const flag = flagEmoji(candidate.flag);
     const normalized = { ...candidate, id, name, rating, spec, position, cardStyle, flag, on: candidate.on !== false };
     ids.add(id);
     return { ...normalized, cardStats: generatedStats(normalized) };
