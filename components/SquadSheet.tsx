@@ -663,11 +663,15 @@ export default function SquadSheet() {
       }
       return result;
     };
-    const positioned = selected.ids.map((id) => ({ id, position: selected.positions[id] || defaultPosition(player(id) || { id, name: "Player", rating: 0, spec: "" }) }));
-    const placements = placeItems(positioned);
     const positionUse = new Map<string, number>();
     const slotItems = FULL_FORMATION_SLOTS.map((position) => { const occurrence = positionUse.get(position) || 0; positionUse.set(position, occurrence + 1); return { id: `slot-${position}-${occurrence}`, position, occurrence }; });
     const slotPlacements = placeItems(slotItems).map((slot) => ({ ...slot, occurrence: Number(slot.id.split("-").at(-1) || 0), occupantId: selected.ids.filter((id) => (selected.positions[id] || defaultPosition(player(id)!)) === slot.position)[Number(slot.id.split("-").at(-1) || 0)] || "" }));
+    const occupiedSlotIds = new Set(slotPlacements.map((slot) => slot.occupantId).filter(Boolean));
+    const positioned = selected.ids.map((id) => ({ id, position: selected.positions[id] || defaultPosition(player(id) || { id, name: "Player", rating: 0, spec: "" }) }));
+    const placements = [
+      ...slotPlacements.filter((slot) => slot.occupantId).map((slot) => ({ id: slot.occupantId, position: slot.position, x: slot.x, y: slot.y })),
+      ...placeItems(positioned.filter((item) => !occupiedSlotIds.has(item.id))),
+    ];
     const moveFormationPlayer = (id: string, position: string, occupantId = "") => {
       if (!id || !selected.ids.includes(id)) return;
       setState((current) => {
