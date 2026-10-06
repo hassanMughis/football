@@ -52,6 +52,10 @@ const CARD_STYLES = [
   { id: "royal", name: "Royal Gold", src: "/card-templates/royal-gold.png", cleanSrc: "/card-templates/royal-gold-clean.png" },
   { id: "electric", name: "Electric Blue", src: "/card-templates/electric-blue.png", cleanSrc: "/card-templates/electric-blue-clean.png" },
   { id: "crimson", name: "Crimson", src: "/card-templates/crimson-obsidian.png", cleanSrc: "/card-templates/crimson-obsidian-clean.png" },
+  { id: "eclipse", name: "Amethyst Eclipse", src: "/card-templates/eclipse-amethyst.png", cleanSrc: "/card-templates/eclipse-amethyst-clean.png" },
+  { id: "inferno", name: "Crimson Inferno", src: "/card-templates/inferno-crimson.png", cleanSrc: "/card-templates/inferno-crimson-clean.png" },
+  { id: "aurora", name: "Emerald Aurora", src: "/card-templates/aurora-emerald.png", cleanSrc: "/card-templates/aurora-emerald-clean.png" },
+  { id: "prism", name: "Holographic Prism", src: "/card-templates/prism-holographic.png", cleanSrc: "/card-templates/prism-holographic-clean.png" },
 ] as const;
 const SEED = ["Abdul Rafay", "Faiq Ali Khan", "Hamza Yildirim", "Hassan", "Ali", "Atif Rajpoot", "Saad Naseer", "Tariq Azeez", "Zian", "Wahid Bux", "Zubair", "Hasnain", "Waris", "Muhammad Saad"];
 
@@ -175,7 +179,10 @@ function RatingPicker({ value, onChange }: { value: number; onChange: (rating: n
           role="radio"
           onPointerMove={(event) => setHoverRating(ratingFromPointer(number, event.currentTarget, event.clientX))}
           onFocus={() => setHoverRating(null)}
-          onClick={(event) => onChange(event.detail === 0 ? number : ratingFromPointer(number, event.currentTarget, event.clientX))}
+          onClick={(event) => {
+            const selected = event.detail === 0 ? number : ratingFromPointer(number, event.currentTarget, event.clientX);
+            onChange(value === selected ? 0 : selected);
+          }}
           onKeyDown={(event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
@@ -209,13 +216,14 @@ const restoreState = (value: unknown): AppState => {
       const legacy = item as Player & { id: string | number; available?: boolean; imageUrl?: string | null };
       const rawRating = Number(legacy.rating) || 0;
       const skills = validSkills(legacy.skills, legacy.spec);
+      const customOverall = normalizeCustomOverall(legacy.customOverall);
       return {
         id: String(legacy.id),
         name: legacy.name.trim() || "Player",
-        rating: rawRating > 10 ? legacyRatingToStars(rawRating) : normalizeRating(rawRating),
+        rating: customOverall ? 0 : rawRating > 10 ? legacyRatingToStars(rawRating) : normalizeRating(rawRating),
         spec: skills[0] || "",
         skills,
-        customOverall: normalizeCustomOverall(legacy.customOverall),
+        customOverall,
         image: typeof legacy.image === "string" ? legacy.image : typeof legacy.imageUrl === "string" ? legacy.imageUrl : undefined,
         cardStyle: CARD_STYLES.some((style) => style.id === legacy.cardStyle) ? legacy.cardStyle : "classic",
         position: typeof legacy.position === "string" ? legacy.position : undefined,
@@ -284,18 +292,19 @@ const legacySquadState = (value: unknown): AppState | null => {
   };
 };
 
-const ratingLabel = (player: Player) => player.rating ? `${player.rating}/10` : "Not rated";
+const ratingLabel = (player: Player) => player.customOverall ? `${player.customOverall} OVR` : player.rating ? `${player.rating}/10` : "Not rated";
 const specialityLabel = (player: Player) => playerSkills(player).join(" · ") || "No skills";
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((word) => word[0] || "").join("").toUpperCase() || "?";
-const sortPlayers = (players: Player[]) => [...players].sort((a, b) => b.rating - a.rating || Number(playerSkills(b).includes("Teamwork")) - Number(playerSkills(a).includes("Teamwork")) || a.name.localeCompare(b.name));
+const playerRanking = (player: Player) => player.customOverall ? Math.max(0, Math.min(10, (player.customOverall - 44) / 5)) : player.rating;
+const sortPlayers = (players: Player[]) => [...players].sort((a, b) => playerRanking(b) - playerRanking(a) || Number(playerSkills(b).includes("Teamwork")) - Number(playerSkills(a).includes("Teamwork")) || a.name.localeCompare(b.name));
 const defaultPosition = (player: Player) => player.position || ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" }[playerSkills(player)[0]] || "CM");
 const primarySkill = (player: Player) => {
   const skills = playerSkills(player);
   return POSITION_SKILL_PRIORITY[defaultPosition(player)]?.find((skill) => skills.includes(skill)) || skills[0] || "";
 };
 const generatedCardStats = (player: Player) => {
-  if (!player.rating) return [["PAC", "–"], ["SHO", "–"], ["PAS", "–"], ["DRI", "–"], ["DEF", "–"], ["PHY", "–"]];
-  const base = 44 + player.rating * 5;
+  if (!player.rating && !player.customOverall) return [["PAC", "–"], ["SHO", "–"], ["PAS", "–"], ["DRI", "–"], ["DEF", "–"], ["PHY", "–"]];
+  const base = player.customOverall ?? 44 + player.rating * 5;
   const skills = playerSkills(player);
   const boost = (label: string) => {
     let total = 0;
@@ -557,7 +566,7 @@ const skillBalanceVector = (player: Player) => {
 };
 
 const numericBalanceVector = (player: Player): BalanceVector | null => {
-  if (!player.rating) return null;
+  if (!player.rating && !player.customOverall) return null;
   const values = generatedCardStats(player).map(([, value]) => Number(value));
   if (values.length !== 6 || values.some((value) => !Number.isFinite(value))) return null;
   const ranking = player.customOverall ? Math.max(0, Math.min(10, (player.customOverall - 44) / 5)) : player.rating;
@@ -956,7 +965,7 @@ export default function SquadSheet() {
     const ids = [...new Set([...state.team.ids, ...(state.balancedTeams?.team2.ids || [])])];
     return ids.sort((a, b) => {
       const aa = stats(a); const bb = stats(b);
-      return (bb.g * 3 + bb.a * 2 + (player(b)?.rating || 0) / 10) - (aa.g * 3 + aa.a * 2 + (player(a)?.rating || 0) / 10);
+      return (bb.g * 3 + bb.a * 2 + (player(b) ? playerRanking(player(b)!) : 0) / 10) - (aa.g * 3 + aa.a * 2 + (player(a) ? playerRanking(player(a)!) : 0) / 10);
     })[0];
   };
 
@@ -982,7 +991,7 @@ export default function SquadSheet() {
         <div className="player-card__identity"><h3 className={item.name.length > 18 ? "is-long" : item.name.length > 13 ? "is-medium" : ""} title={item.name}>{item.name}</h3><p>{skills.join(" · ") || "Footballer"}</p></div>
         <div className="player-card__stats">{cardStats.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
       </div>
-      <div className="player-card__meta"><span>{item.rating ? `${item.rating}/10 rating` : "Not rated"}</span><span>{item.on === false ? "Inactive" : "Active"}</span></div>
+      <div className="player-card__meta"><span>{item.customOverall ? `${item.customOverall} custom OVR` : item.rating ? `${item.rating}/10 rating` : "Not rated"}</span><span>{item.on === false ? "Inactive" : "Active"}</span></div>
       {children && <div className="player-card__actions">{children}</div>}
     </article>;
   }
@@ -1116,8 +1125,8 @@ export default function SquadSheet() {
     return <>
       {unlocked && <div className="sec"><h2>Add a player</h2>
         <label htmlFor="pn">Name</label><input id="pn" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Player name" autoComplete="off" />
-        <label>Rating, 0.5–10 (optional)</label><RatingPicker value={draft.rating} onChange={(rating) => setDraft((current) => ({ ...current, rating }))} />
-        <label htmlFor="custom-overall">Custom OVR (optional)</label><input id="custom-overall" type="number" inputMode="numeric" min="1" max="99" step="1" value={draft.customOverall} onChange={(event) => setDraft((current) => ({ ...current, customOverall: event.target.value }))} placeholder="Auto calculated" /><p className="note">Leave blank to calculate OVR automatically from the six stats.</p>
+        <label>Rating, 0.5–10 (optional)</label><RatingPicker value={draft.rating} onChange={(rating) => setDraft((current) => ({ ...current, rating, customOverall: rating ? "" : current.customOverall }))} />
+        <label htmlFor="custom-overall">Custom OVR (optional)</label><input id="custom-overall" type="number" inputMode="numeric" min="1" max="99" step="1" value={draft.customOverall} onChange={(event) => setDraft((current) => ({ ...current, customOverall: event.target.value, rating: event.target.value ? 0 : current.rating }))} placeholder="Auto calculated" /><p className="note">A custom OVR replaces the 0.5–10 rating. Leave both blank for an unrated player.</p>
         <label>Skills (choose up to {MAX_PLAYER_SKILLS})</label><SkillPicker skills={draft.skills} onChange={(skills) => setDraft((current) => ({ ...current, skills }))} />
         <div className="player-details-row"><div><label htmlFor="position">Main position</label><select id="position" value={draft.position} onChange={(e) => setDraft({ ...draft, position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label htmlFor="flag">Flag or country code</label><input id="flag" value={draft.flag} maxLength={8} onChange={(e) => setDraft({ ...draft, flag: e.target.value })} onBlur={() => setDraft((current) => ({ ...current, flag: flagEmoji(current.flag) }))} placeholder="🇵🇰 or PK" /></div></div>
         <p className="note">Main position is where the player is naturally best. Their assigned team position is changed separately on the formation map.</p>
@@ -1136,10 +1145,10 @@ export default function SquadSheet() {
             <label htmlFor={`player-name-${item.id}`}>Player name</label>
             <input id={`player-name-${item.id}`} defaultValue={item.name} maxLength={60} autoComplete="off" onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} onBlur={(event) => { const name = event.currentTarget.value.trim(); if (!name) { event.currentTarget.value = item.name; window.alert("Player name cannot be empty."); return; } if (name !== item.name) updatePlayer(item.id, { name }); }} />
             <label>Rating, 0.5–10</label>
-            <RatingPicker value={item.rating} onChange={(rating) => updatePlayer(item.id, { rating })} />
+            <RatingPicker value={item.rating} onChange={(rating) => updatePlayer(item.id, { rating, ...(rating ? { customOverall: undefined } : {}) })} />
             <label htmlFor={`custom-overall-${item.id}`}>Custom OVR (optional)</label>
-            <input id={`custom-overall-${item.id}`} type="number" inputMode="numeric" min="1" max="99" step="1" defaultValue={item.customOverall || ""} placeholder="Auto calculated" onBlur={(event) => { const value = event.currentTarget.value.trim(); const customOverall = value ? normalizeCustomOverall(value) : undefined; if (value && customOverall === undefined) { event.currentTarget.value = item.customOverall ? String(item.customOverall) : ""; window.alert("Custom OVR must be a whole number from 1 to 99."); return; } updatePlayer(item.id, { customOverall }); }} />
-            <p className="note">Leave blank to calculate OVR automatically from the six stats.</p>
+            <input key={`custom-overall-${item.id}-${item.customOverall || "auto"}`} id={`custom-overall-${item.id}`} type="number" inputMode="numeric" min="1" max="99" step="1" defaultValue={item.customOverall || ""} placeholder="Auto calculated" onChange={(event) => { if (event.currentTarget.value && item.rating) updatePlayer(item.id, { rating: 0 }); }} onBlur={(event) => { const value = event.currentTarget.value.trim(); const customOverall = value ? normalizeCustomOverall(value) : undefined; if (value && customOverall === undefined) { event.currentTarget.value = item.customOverall ? String(item.customOverall) : ""; window.alert("Custom OVR must be a whole number from 1 to 99."); return; } updatePlayer(item.id, { customOverall, ...(customOverall ? { rating: 0 } : {}) }); }} />
+            <p className="note">A custom OVR replaces the 0.5–10 rating. Leave both blank for an unrated player.</p>
             <label>Skills (choose up to {MAX_PLAYER_SKILLS})</label>
             <SkillPicker skills={playerSkills(item)} onChange={(skills) => updatePlayer(item.id, { skills, spec: skills[0] || "" })} />
             <div className="player-details-row"><div><label>Main position</label><select value={defaultPosition(item)} onChange={(e) => updatePlayer(item.id, { position: e.target.value })}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></div><div><label>Flag or country code</label><input value={item.flag || "🇵🇰"} maxLength={8} onChange={(e) => updatePlayer(item.id, { flag: e.target.value })} onBlur={(e) => updatePlayer(item.id, { flag: flagEmoji(e.currentTarget.value) })} placeholder="🇵🇰 or PK" /></div></div>
