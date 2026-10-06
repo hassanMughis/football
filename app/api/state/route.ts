@@ -7,7 +7,7 @@ const stateObjectPath = "player-images/squad-sheet/app-state.json";
 const statNames = ["PAC", "SHO", "PAS", "DRI", "DEF", "PHY"] as const;
 const specialities = new Set(["", "Passing", "Scoring", "Shooting", "Dribbling", "Teamwork", "Goalkeeping", "Defending", "Pace", "Strength", "Heading"]);
 const maxPlayerSkills = 4;
-const cardStyles = new Set(["classic", "royal", "electric", "crimson"]);
+const cardStyles = new Set(["classic", "royal", "electric", "crimson", "eclipse", "inferno", "aurora", "prism"]);
 const positions = new Set(["GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST"]);
 const positionStatOffsets: Record<string, Record<typeof statNames[number], number>> = {
   GK: { PAC: -15, SHO: -30, PAS: -5, DRI: -15, DEF: 30, PHY: 35 },
@@ -94,8 +94,8 @@ function generatedStats(player: JsonObject) {
   const skills = normalizedSkills(player.skills, player.spec);
   const customOverallValue = Number(player.customOverall);
   const customOverall = Number.isInteger(customOverallValue) && customOverallValue >= 1 && customOverallValue <= 99 ? customOverallValue : null;
-  if (!rating) return { OVR: customOverall, PAC: null, SHO: null, PAS: null, DRI: null, DEF: null, PHY: null };
-  const base = 44 + rating * 5;
+  if (!rating && !customOverall) return { OVR: null, PAC: null, SHO: null, PAS: null, DRI: null, DEF: null, PHY: null };
+  const base = customOverall ?? 44 + rating * 5;
   const boost = (label: typeof statNames[number]) => {
     let total = 0;
     if ((skills.includes("Scoring") || skills.includes("Shooting")) && label === "SHO") total += 6;
@@ -135,7 +135,7 @@ function validateAndEnrichState(value: unknown) {
     const position = defaultPositionFor(candidate, skills);
     const cardStyle = cardStyles.has(String(candidate.cardStyle || "")) ? String(candidate.cardStyle) : "classic";
     const flag = flagEmoji(candidate.flag);
-    const normalized = { ...candidate, id, name, rating, spec, skills, customOverall, position, cardStyle, flag, on: candidate.on !== false };
+    const normalized = { ...candidate, id, name, rating: customOverall ? 0 : rating, spec, skills, customOverall, position, cardStyle, flag, on: candidate.on !== false };
     ids.add(id);
     return { ...normalized, cardStats: generatedStats(normalized) };
   });
@@ -250,11 +250,14 @@ async function readDatabaseState() {
 
 export async function GET() {
   try {
-    try {
-      const databaseState = await readDatabaseState();
-      if (databaseState) return Response.json({ state: databaseState, source: "database" });
-    } catch { /* The rich-table migration may not have been run yet. */ }
-    return Response.json({ state: await readStorageState(), source: "storage" });
+    let databaseState: JsonObject | null = null;
+    let storageState: JsonObject | null = null;
+    try { databaseState = await readDatabaseState(); } catch { /* The rich-table migration may not have been run yet. */ }
+    try { storageState = await readStorageState(); } catch { /* Database state can remain available if Storage is temporarily unavailable. */ }
+    const databaseSavedAt = numberValue(databaseState?.savedAt);
+    const storageSavedAt = numberValue(storageState?.savedAt);
+    if (storageState && (!databaseState || storageSavedAt > databaseSavedAt)) return Response.json({ state: storageState, source: "storage" });
+    return Response.json({ state: databaseState || storageState, source: databaseState ? "database" : "storage" });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Could not load the squad state." }, { status: 503 });
   }

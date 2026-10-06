@@ -53,7 +53,7 @@ do $$ begin
     alter table public.players add constraint players_custom_overall_check check (custom_overall is null or custom_overall between 1 and 99);
   end if;
   if not exists (select 1 from pg_constraint where conname = 'players_card_style_check' and conrelid = 'public.players'::regclass) then
-    alter table public.players add constraint players_card_style_check check (card_style in ('classic', 'royal', 'electric', 'crimson'));
+    alter table public.players add constraint players_card_style_check check (card_style in ('classic', 'royal', 'electric', 'crimson', 'eclipse', 'inferno', 'aurora', 'prism'));
   end if;
   if not exists (select 1 from pg_constraint where conname = 'players_position_check' and conrelid = 'public.players'::regclass) then
     alter table public.players add constraint players_position_check check (position in ('GK', 'CB', 'LB', 'RB', 'CDM', 'CM', 'CAM', 'LM', 'RM', 'LW', 'RW', 'CF', 'ST'));
