@@ -205,6 +205,19 @@ function SkillPicker({ skills, onChange }: { skills: string[]; onChange: (skills
   </>;
 }
 
+function PlayerPhoto({ src, alt, className = "" }: { src: string; alt: string; className?: string }) {
+  const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
+  return <img
+    className={`${className}${className ? " " : ""}is-${orientation}`}
+    src={src}
+    alt={alt}
+    onLoad={(event) => {
+      const image = event.currentTarget;
+      setOrientation(image.naturalWidth > image.naturalHeight ? "landscape" : "portrait");
+    }}
+  />;
+}
+
 const restoreState = (value: unknown): AppState => {
   const base = initialState();
   if (!value || typeof value !== "object" || Array.isArray(value)) return base;
@@ -987,7 +1000,7 @@ export default function SquadSheet() {
         {secondarySkills.length > 0 && <div className="player-card__skill-stack" aria-label={`Other skills: ${secondarySkills.join(", ")}`}>{secondarySkills.map((skill) => <img key={skill} src={SKILL_BADGES[skill]} alt={`${skill} skill`} title={skill} />)}</div>}
         {positionOverride && <span className="player-card__lineup-position" title={`Assigned team position: ${positionOverride}`}>{positionOverride}</span>}
         <div className="player-card__photo">
-          {item.image && <img src={item.image} alt={`${item.name} portrait`} />}
+          {item.image && <PlayerPhoto src={item.image} alt={`${item.name} portrait`} />}
         </div>
         <div className="player-card__identity"><h3 className={item.name.length > 18 ? "is-long" : item.name.length > 13 ? "is-medium" : ""} title={item.name}>{item.name}</h3><p>{skills.join(" · ") || "Footballer"}</p></div>
         <div className="player-card__stats">{cardStats.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
@@ -1072,7 +1085,7 @@ export default function SquadSheet() {
       const assignedPosition = selected.positions[id] || defaultPosition(item);
       return <button type="button" draggable={unlocked} className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}${draggedFormationId === id ? " is-dragging" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onDragStart={(event) => { if (!unlocked) return; setDraggedFormationId(id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", id); }} onDragEnd={() => setDraggedFormationId("")} onDragOver={(event) => { if (unlocked && draggedFormationId && draggedFormationId !== id) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, assignedPosition, id); }} onClick={() => unlocked && draggedFormationId && draggedFormationId !== id ? moveFormationPlayer(draggedFormationId, assignedPosition, id) : setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
         <img className="formation-mini-frame" src={item.image ? design.cleanSrc : design.src} alt="" />
-        {item.image && <img className="formation-mini-photo" src={item.image} alt="" />}
+        {item.image && <PlayerPhoto className="formation-mini-photo" src={item.image} alt="" />}
         <span className="formation-mini-overall">{positionOverall(item, assignedPosition) ?? "–"}</span>
         <span className="formation-mini-position">{assignedPosition}</span>
         <span className="formation-mini-name">{item.name}</span>
