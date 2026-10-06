@@ -176,7 +176,7 @@ table { width:100%; border-collapse:collapse; }th,td { padding:10px 4px; text-al
 .player-card__identity h3.is-medium { font-size:clamp(9px,2.15vw,13px); letter-spacing:.01em; }
 .player-card__identity h3.is-long { font-size:clamp(8px,1.8vw,11px); letter-spacing:0; }
 .player-card__identity p { width:100%; overflow:hidden; margin:1px 0 0; color:#f7dfa0; font-size:clamp(7px,1.45vw,9px); line-height:1.15; font-weight:700; letter-spacing:.1em; text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }
-.card-theme-eclipse .player-card__identity,.card-theme-inferno .player-card__identity,.card-theme-aurora .player-card__identity,.card-theme-prism .player-card__identity { top:59.5%; }
+.card-theme-aurora .player-card__identity { top:59.5%; }
 .card-theme-classic .player-card__identity,.card-theme-royal .player-card__identity { text-shadow:0 1px 3px rgba(255,255,255,.65); }
 .card-theme-classic .player-card__identity h3,.card-theme-royal .player-card__identity h3 { color:#312508; }
 .card-theme-classic .player-card__identity p,.card-theme-royal .player-card__identity p { color:#6c5110; }
