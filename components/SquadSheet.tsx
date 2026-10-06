@@ -442,13 +442,57 @@ const assignLineupPositions = (roster: Player[]): LineupPositions => {
 };
 
 const normalizeLineupPositions = (roster: Player[], saved: LineupPositions): LineupPositions => {
-  const automatic = assignLineupPositions(roster);
-  const validSaved = Object.fromEntries(Object.entries(saved || {}).filter(([id, position]) => roster.some((item) => item.id === id) && POSITIONS.includes(position as typeof POSITIONS[number])));
-  const merged = { ...automatic, ...validSaved };
-  const counts = Object.values(merged).reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
-  const allowed = FULL_FORMATION_SLOTS.reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
-  const invalid = (roster.length > 0 && counts.GK !== 1) || Object.entries(counts).some(([position, count]) => count > Math.max(1, allowed[position] || 0));
-  return invalid ? automatic : merged;
+  if (!roster.length) return {};
+  const requiredSlots = formationSlots(roster.length);
+  const allowedSlots = formationSlots(Math.max(11, roster.length));
+  const capacity = allowedSlots.reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
+  const used: Record<string, number> = {};
+  const result: LineupPositions = {};
+
+  for (const item of roster) {
+    const position = saved?.[item.id];
+    if (!position || !POSITIONS.includes(position as typeof POSITIONS[number]) || (used[position] || 0) >= (capacity[position] || 0)) continue;
+    result[item.id] = position;
+    used[position] = (used[position] || 0) + 1;
+  }
+
+  const reserved = { ...used };
+  const openSlots = requiredSlots.filter((position) => {
+    if ((reserved[position] || 0) >= (capacity[position] || 0)) return false;
+    reserved[position] = (reserved[position] || 0) + 1;
+    return true;
+  });
+  const unassigned = roster.filter((item) => !result[item.id]);
+  for (const slot of openSlots.slice(0, unassigned.length)) {
+    let bestIndex = 0;
+    for (let index = 1; index < unassigned.length; index++) {
+      if (positionFit(unassigned[index], slot) > positionFit(unassigned[bestIndex], slot)) bestIndex = index;
+    }
+    const [picked] = unassigned.splice(bestIndex, 1);
+    if (picked) result[picked.id] = slot;
+  }
+  return result;
+};
+
+const reconcileBalancedTeams = (balancedTeams: BalancedTeams | null, players: Player[]): BalancedTeams | null => {
+  if (!balancedTeams) return null;
+  const available = new Map(players.filter((item) => item.on !== false).map((item) => [item.id, item]));
+  const repairTeam = (team: BalancedTeam): BalancedTeam => {
+    const ids = team.ids.filter((id) => available.has(id));
+    const roster = ids.map((id) => available.get(id)).filter((item): item is Player => Boolean(item));
+    const captain = ids.includes(team.captain) ? team.captain : sortPlayers(roster)[0]?.id || "";
+    return { ...team, ids, captain, positions: normalizeLineupPositions(roster, team.positions) };
+  };
+  return { ...balancedTeams, cost: -1, team1: repairTeam(balancedTeams.team1), team2: repairTeam(balancedTeams.team2) };
+};
+
+const reconcilePickedTeam = (team: Team | null, players: Player[]): Team | null => {
+  if (!team) return null;
+  const available = new Map(players.filter((item) => item.on !== false).map((item) => [item.id, item]));
+  const ids = team.ids.filter((id) => available.has(id));
+  if (!ids.length) return null;
+  const roster = ids.map((id) => available.get(id)).filter((item): item is Player => Boolean(item));
+  return { ids, captain: ids.includes(team.captain) ? team.captain : sortPlayers(roster)[0]?.id || ids[0] };
 };
 
 const formationLabel = (positions: LineupPositions) => {
@@ -456,16 +500,20 @@ const formationLabel = (positions: LineupPositions) => {
   return POSITIONS.filter((position) => counts[position]).map((position) => `${counts[position] && counts[position] > 1 ? `${counts[position]}×` : ""}${position}`).join(" · ");
 };
 
-type BalanceVector = [number, number, number, number, number, number, number, number, number, number, number];
+type BalanceVector = number[];
 type BalanceItem = { player: Player; values: BalanceVector };
 type BalanceCandidate = { first: BalanceItem[]; second: BalanceItem[]; cost: number; signature: string };
 
-const BALANCE_WEIGHTS: BalanceVector = [2.2, 1, 1, 1, 1, 1, 1, 12, 5, 5, 5];
-const BALANCE_SCALES: BalanceVector = [1, 5, 5, 5, 5, 5, 5, .15, .22, .22, .22];
-const FALLBACK_BALANCE_VECTOR: BalanceVector = [5.5, 75, 73, 74, 76, 66, 71, 0, 0, 0, 0];
+const BALANCE_WEIGHTS: BalanceVector = [2.4, 1, 1, 1, 1, 1, 1, 14, 6, 6, 6, ...SPECIALITIES.map(() => .7)];
+const BALANCE_SCALES: BalanceVector = [1, 5, 5, 5, 5, 5, 5, .15, .22, .22, .22, ...SPECIALITIES.map(() => .25)];
+const FALLBACK_BALANCE_VECTOR: BalanceVector = [5.5, 75, 73, 74, 76, 66, 71, 0, 0, 0, 0, ...SPECIALITIES.map(() => 0)];
 const naturalRoleVector = (player: Player): [number, number, number, number] => {
   const family = positionFamily(defaultPosition(player));
   return [Number(family === "goalkeeper"), Number(family === "defence"), Number(family === "midfield"), Number(family === "attack")];
+};
+const skillBalanceVector = (player: Player) => {
+  const skills = playerSkills(player);
+  return SPECIALITIES.map((skill) => Number(skills.includes(skill)));
 };
 
 const numericBalanceVector = (player: Player): BalanceVector | null => {
@@ -473,7 +521,7 @@ const numericBalanceVector = (player: Player): BalanceVector | null => {
   const values = generatedCardStats(player).map(([, value]) => Number(value));
   if (values.length !== 6 || values.some((value) => !Number.isFinite(value))) return null;
   const ranking = player.customOverall ? Math.max(0, Math.min(10, (player.customOverall - 44) / 5)) : player.rating;
-  return [ranking, values[0], values[1], values[2], values[3], values[4], values[5], ...naturalRoleVector(player)];
+  return [ranking, values[0], values[1], values[2], values[3], values[4], values[5], ...naturalRoleVector(player), ...skillBalanceVector(player)];
 };
 
 const createBalanceItems = (players: Player[]) => {
@@ -489,6 +537,7 @@ const createBalanceItems = (players: Player[]) => {
     if (values) return { player, values };
     const fallbackValues = [...fallback] as BalanceVector;
     fallbackValues.splice(7, 4, ...naturalRoleVector(player));
+    fallbackValues.splice(11, SPECIALITIES.length, ...skillBalanceVector(player));
     return { player, values: fallbackValues };
   });
 };
@@ -514,7 +563,7 @@ const shuffled = <T,>(items: T[], random: () => number) => {
 };
 
 const vectorTotal = (items: BalanceItem[]) => {
-  const total: BalanceVector = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const total: BalanceVector = Array.from({ length: BALANCE_WEIGHTS.length }, () => 0);
   for (const item of items) {
     for (let feature = 0; feature < total.length; feature++) total[feature] += item.values[feature];
   }
@@ -534,6 +583,43 @@ const balanceCost = (first: BalanceVector, firstCount: number, second: BalanceVe
   return weightedDifference / totalWeight + largestDifference * largestDifference * .15;
 };
 
+const formationQuality = (items: BalanceItem[]) => {
+  const roster = items.map(({ player }) => player);
+  const positions = assignLineupPositions(roster);
+  let overall = 0;
+  let naturalOverall = 0;
+  let fit = 0;
+  for (const item of items) {
+    const assigned = positions[item.player.id] || defaultPosition(item.player);
+    const original = displayedOverall(item.player) ?? 44 + item.values[0] * 5;
+    const assignedOverall = positionOverall(item.player, assigned) ?? original;
+    overall += assignedOverall;
+    naturalOverall += original;
+    fit += positionFit(item.player, assigned);
+  }
+  const count = Math.max(1, items.length);
+  return { overall: overall / count, loss: Math.max(0, (naturalOverall - overall) / count), fit: fit / count };
+};
+
+const formationBalancePenalty = (first: BalanceItem[], second: BalanceItem[]) => {
+  const a = formationQuality(first);
+  const b = formationQuality(second);
+  const strengthGap = Math.abs(a.overall - b.overall) / 4;
+  const fitGap = Math.abs(a.fit - b.fit) / 24;
+  const lossGap = Math.abs(a.loss - b.loss) / 3;
+  const averageLoss = (a.loss + b.loss) / 12;
+  const weakFormation = Math.max(0, 95 - (a.fit + b.fit) / 2) / 30;
+  return strengthGap * strengthGap * .28
+    + fitGap * fitGap * .12
+    + lossGap * lossGap * .08
+    + averageLoss * averageLoss * .06
+    + weakFormation * weakFormation * .04;
+};
+
+const completeBalanceCost = (first: BalanceItem[], second: BalanceItem[], firstTotal = vectorTotal(first), secondTotal = vectorTotal(second)) => (
+  balanceCost(firstTotal, first.length, secondTotal, second.length) + formationBalancePenalty(first, second)
+);
+
 const balanceSignature = (first: BalanceItem[], second: BalanceItem[]) => {
   const firstIds = first.map(({ player }) => player.id).sort().join("|");
   const secondIds = second.map(({ player }) => player.id).sort().join("|");
@@ -545,7 +631,7 @@ const improveBalance = (firstSeed: BalanceItem[], secondSeed: BalanceItem[], loc
   let second = [...secondSeed];
   const firstTotal = vectorTotal(first);
   const secondTotal = vectorTotal(second);
-  let cost = balanceCost(firstTotal, first.length, secondTotal, second.length);
+  let cost = completeBalanceCost(first, second, firstTotal, secondTotal);
   const maxPasses = Math.min(48, first.length * second.length);
 
   for (let pass = 0; pass < maxPasses; pass++) {
@@ -563,7 +649,11 @@ const improveBalance = (firstSeed: BalanceItem[], secondSeed: BalanceItem[], loc
           nextFirst[feature] += change;
           nextSecond[feature] -= change;
         }
-        const nextCost = balanceCost(nextFirst, first.length, nextSecond, second.length);
+        const nextFirstItems = [...first];
+        const nextSecondItems = [...second];
+        nextFirstItems[firstIndex] = second[secondIndex];
+        nextSecondItems[secondIndex] = first[firstIndex];
+        const nextCost = completeBalanceCost(nextFirstItems, nextSecondItems, nextFirst, nextSecond);
         if (nextCost < bestCost - 1e-10) {
           bestCost = nextCost;
           bestFirst = firstIndex;
@@ -958,16 +1048,28 @@ export default function SquadSheet() {
     const updatePlayer = (id: string, patch: Partial<Player>) => setState((current) => ({ ...current, players: current.players.map((item) => item.id === id ? { ...item, ...patch } : item), balancedTeams: current.balancedTeams ? { ...current.balancedTeams, cost: -1 } : null }));
     const togglePlayer = (id: string) => setState((current) => {
       const players = current.players.map((item) => item.id === id ? { ...item, on: item.on === false } : item);
-      const madeInactive = players.find((item) => item.id === id)?.on === false;
-      const reset = madeInactive && current.team?.ids.includes(id);
-      return { ...current, balancedTeams: null, players, ...(reset ? { team: null, pool: null, match: newMatch(current.match) } : {}) };
+      return {
+        ...current,
+        players,
+        balancedTeams: reconcileBalancedTeams(current.balancedTeams, players),
+        team: reconcilePickedTeam(current.team, players),
+        pool: current.pool?.filter((item) => players.some((candidate) => candidate.id === item.id && candidate.on !== false)) || null,
+        match: current.match.motm === id && players.find((item) => item.id === id)?.on === false ? { ...current.match, motm: "" } : current.match,
+      };
     });
     const deletePlayer = (id: string) => {
       const selected = player(id);
       if (!selected || !window.confirm(`Delete ${selected.name}? Their saved match-history records will be kept.`)) return;
       setState((current) => {
-        const resetMatch = Boolean(current.team?.ids.includes(id) || current.balancedTeams?.team2.ids.includes(id));
-        return { ...current, balancedTeams: null, players: current.players.filter((item) => item.id !== id), pool: resetMatch ? null : current.pool?.filter((item) => item.id !== id) || null, ...(resetMatch ? { team: null, match: newMatch(current.match) } : {}) };
+        const players = current.players.filter((item) => item.id !== id);
+        return {
+          ...current,
+          players,
+          balancedTeams: reconcileBalancedTeams(current.balancedTeams, players),
+          team: reconcilePickedTeam(current.team, players),
+          pool: current.pool?.filter((item) => item.id !== id) || null,
+          match: current.match.motm === id ? { ...current.match, motm: "" } : current.match,
+        };
       });
       if (editId === id) setEditId("");
     };
