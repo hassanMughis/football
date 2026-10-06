@@ -427,19 +427,67 @@ const positionFit = (item: Player, slot: string) => {
   return score;
 };
 
-const assignLineupPositions = (roster: Player[]): LineupPositions => {
-  const remaining = [...roster];
+const optimalLineupPositions = (roster: Player[], slots: string[]): LineupPositions => {
   const result: LineupPositions = {};
-  for (const slot of formationSlots(roster.length)) {
-    let bestIndex = 0;
-    for (let index = 1; index < remaining.length; index++) {
-      if (positionFit(remaining[index], slot) > positionFit(remaining[bestIndex], slot)) bestIndex = index;
-    }
-    const [picked] = remaining.splice(bestIndex, 1);
-    if (picked) result[picked.id] = slot;
+  const count = roster.length;
+  if (!count || slots.length !== count) return result;
+
+  const score = roster.map((item) => slots.map((slot) => positionFit(item, slot) + (positionOverall(item, slot) || 0) * 2));
+  const maximum = Math.max(...score.flat());
+  const playerPotential = Array.from({ length: count + 1 }, () => 0);
+  const slotPotential = Array.from({ length: count + 1 }, () => 0);
+  const matchedPlayer = Array.from({ length: count + 1 }, () => 0);
+  const previousSlot = Array.from({ length: count + 1 }, () => 0);
+
+  // Hungarian assignment finds the exact maximum-scoring player-to-position arrangement.
+  for (let playerIndex = 1; playerIndex <= count; playerIndex++) {
+    matchedPlayer[0] = playerIndex;
+    let currentSlot = 0;
+    const minimum = Array.from({ length: count + 1 }, () => Number.POSITIVE_INFINITY);
+    const used = Array.from({ length: count + 1 }, () => false);
+    do {
+      used[currentSlot] = true;
+      const currentPlayer = matchedPlayer[currentSlot];
+      let change = Number.POSITIVE_INFINITY;
+      let nextSlot = 0;
+      for (let slotIndex = 1; slotIndex <= count; slotIndex++) {
+        if (used[slotIndex]) continue;
+        const cost = maximum - score[currentPlayer - 1][slotIndex - 1] - playerPotential[currentPlayer] - slotPotential[slotIndex];
+        if (cost < minimum[slotIndex]) {
+          minimum[slotIndex] = cost;
+          previousSlot[slotIndex] = currentSlot;
+        }
+        if (minimum[slotIndex] < change) {
+          change = minimum[slotIndex];
+          nextSlot = slotIndex;
+        }
+      }
+      for (let slotIndex = 0; slotIndex <= count; slotIndex++) {
+        if (used[slotIndex]) {
+          playerPotential[matchedPlayer[slotIndex]] += change;
+          slotPotential[slotIndex] -= change;
+        } else minimum[slotIndex] -= change;
+      }
+      currentSlot = nextSlot;
+    } while (matchedPlayer[currentSlot] !== 0);
+
+    do {
+      const nextSlot = previousSlot[currentSlot];
+      matchedPlayer[currentSlot] = matchedPlayer[nextSlot];
+      currentSlot = nextSlot;
+    } while (currentSlot !== 0);
+  }
+
+  for (let slotIndex = 1; slotIndex <= count; slotIndex++) {
+    const item = roster[matchedPlayer[slotIndex] - 1];
+    if (item) result[item.id] = slots[slotIndex - 1];
   }
   return result;
 };
+
+const assignLineupPositions = (roster: Player[]): LineupPositions => (
+  optimalLineupPositions(roster, formationSlots(roster.length))
+);
 
 const normalizeLineupPositions = (roster: Player[], saved: LineupPositions): LineupPositions => {
   if (!roster.length) return {};
@@ -463,15 +511,7 @@ const normalizeLineupPositions = (roster: Player[], saved: LineupPositions): Lin
     return true;
   });
   const unassigned = roster.filter((item) => !result[item.id]);
-  for (const slot of openSlots.slice(0, unassigned.length)) {
-    let bestIndex = 0;
-    for (let index = 1; index < unassigned.length; index++) {
-      if (positionFit(unassigned[index], slot) > positionFit(unassigned[bestIndex], slot)) bestIndex = index;
-    }
-    const [picked] = unassigned.splice(bestIndex, 1);
-    if (picked) result[picked.id] = slot;
-  }
-  return result;
+  return { ...result, ...optimalLineupPositions(unassigned, openSlots.slice(0, unassigned.length)) };
 };
 
 const reconcileBalancedTeams = (balancedTeams: BalancedTeams | null, players: Player[]): BalancedTeams | null => {
