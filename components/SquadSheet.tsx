@@ -363,6 +363,12 @@ const formationSlots = (count: number) => {
   return [...FORMATION_SLOTS[11], ...Array.from({ length: count - 11 }, (_, index) => extras[index % extras.length])];
 };
 const FULL_FORMATION_SLOTS = FORMATION_SLOTS[11];
+const LINEUP_POSITION_POOL = ["GK", "LB", "CB", "CB", "RB", "CDM", "CM", "CAM", "LM", "RM", "LW", "RW", "CF", "ST"];
+const lineupCandidateSlots = (count: number) => {
+  if (count <= LINEUP_POSITION_POOL.length) return [...LINEUP_POSITION_POOL];
+  const extras = ["CM", "CB", "ST", "LW", "RW"];
+  return [...LINEUP_POSITION_POOL, ...Array.from({ length: count - LINEUP_POSITION_POOL.length }, (_, index) => extras[index % extras.length])];
+};
 
 const positionFamily = (position: string) => {
   if (position === "GK") return "goalkeeper";
@@ -449,13 +455,25 @@ const positionFit = (item: Player, slot: string) => {
   return score;
 };
 
-const optimalLineupPositions = (roster: Player[], slots: string[]): LineupPositions => {
+const optimalLineupPositions = (roster: Player[], slots: string[], requiredPositions: string[] = []): LineupPositions => {
   const result: LineupPositions = {};
-  const count = roster.length;
-  if (!count || slots.length !== count) return result;
+  const playerCount = roster.length;
+  const slotCount = slots.length;
+  if (!playerCount || slotCount < playerCount) return result;
+  const count = Math.max(playerCount, slotCount);
+  const required = new Set(requiredPositions);
+  const requiredBonus = 1_000_000_000_000;
 
-  // OVR is the primary objective. Position fit only resolves lineups with the same total OVR.
-  const score = roster.map((item) => slots.map((slot) => (positionOverall(item, slot) || 0) * 1_000_000 + positionFit(item, slot)));
+  // Real players may use any candidate slot. Dummy rows leave the unused positions empty.
+  // OVR is the primary objective; position fit only resolves equal-total-OVR lineups.
+  const score = Array.from({ length: count }, (_, playerIndex) => Array.from({ length: count }, (_, slotIndex) => {
+    if (playerIndex >= playerCount) return 0;
+    if (slotIndex >= slotCount) return -requiredBonus;
+    const slot = slots[slotIndex];
+    return (positionOverall(roster[playerIndex], slot) || 0) * 1_000_000
+      + positionFit(roster[playerIndex], slot)
+      + (required.has(slot) ? requiredBonus : 0);
+  }));
   const maximum = Math.max(...score.flat());
   const playerPotential = Array.from({ length: count + 1 }, () => 0);
   const slotPotential = Array.from({ length: count + 1 }, () => 0);
@@ -501,21 +519,21 @@ const optimalLineupPositions = (roster: Player[], slots: string[]): LineupPositi
     } while (currentSlot !== 0);
   }
 
-  for (let slotIndex = 1; slotIndex <= count; slotIndex++) {
-    const item = roster[matchedPlayer[slotIndex] - 1];
-    if (item) result[item.id] = slots[slotIndex - 1];
+  for (let slotIndex = 1; slotIndex <= slotCount; slotIndex++) {
+    const playerIndex = matchedPlayer[slotIndex] - 1;
+    const item = roster[playerIndex];
+    if (item && playerIndex < playerCount) result[item.id] = slots[slotIndex - 1];
   }
   return result;
 };
 
 const assignLineupPositions = (roster: Player[]): LineupPositions => (
-  optimalLineupPositions(roster, formationSlots(roster.length))
+  optimalLineupPositions(roster, lineupCandidateSlots(roster.length), ["GK"])
 );
 
 const normalizeLineupPositions = (roster: Player[], saved: LineupPositions): LineupPositions => {
   if (!roster.length) return {};
-  const requiredSlots = formationSlots(roster.length);
-  const allowedSlots = formationSlots(Math.max(11, roster.length));
+  const allowedSlots = lineupCandidateSlots(Math.max(11, roster.length));
   const capacity = allowedSlots.reduce<Record<string, number>>((result, position) => { result[position] = (result[position] || 0) + 1; return result; }, {});
   const used: Record<string, number> = {};
   const result: LineupPositions = {};
@@ -527,14 +545,16 @@ const normalizeLineupPositions = (roster: Player[], saved: LineupPositions): Lin
     used[position] = (used[position] || 0) + 1;
   }
 
-  const reserved = { ...used };
-  const openSlots = requiredSlots.filter((position) => {
-    if ((reserved[position] || 0) >= (capacity[position] || 0)) return false;
-    reserved[position] = (reserved[position] || 0) + 1;
+  const consumed: Record<string, number> = {};
+  const openSlots = allowedSlots.filter((position) => {
+    if ((consumed[position] || 0) < (used[position] || 0)) {
+      consumed[position] = (consumed[position] || 0) + 1;
+      return false;
+    }
     return true;
   });
   const unassigned = roster.filter((item) => !result[item.id]);
-  return { ...result, ...optimalLineupPositions(unassigned, openSlots.slice(0, unassigned.length)) };
+  return { ...result, ...optimalLineupPositions(unassigned, openSlots, used.GK ? [] : ["GK"]) };
 };
 
 const reconcileBalancedTeams = (balancedTeams: BalancedTeams | null, players: Player[]): BalancedTeams | null => {
