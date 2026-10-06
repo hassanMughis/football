@@ -370,15 +370,38 @@ const weightedPositionRating = (player: Player, position: string) => {
   return Object.entries(POSITION_STAT_WEIGHTS[position] || POSITION_STAT_WEIGHTS.CM).reduce((total, [stat, weight]) => total + (stats[stat] || 0) * weight, 0);
 };
 
+const POSITION_NEIGHBORS: Record<string, string[]> = {
+  CB: ["LB", "RB", "CDM"],
+  LB: ["CB", "LM", "LW"],
+  RB: ["CB", "RM", "RW"],
+  CDM: ["CB", "CM"],
+  CM: ["CDM", "CAM", "LM", "RM"],
+  CAM: ["CM", "LM", "RM", "LW", "RW", "CF"],
+  LM: ["LB", "CM", "CAM", "LW"],
+  RM: ["RB", "CM", "CAM", "RW"],
+  LW: ["LB", "LM", "CAM", "RW", "CF", "ST"],
+  RW: ["RB", "RM", "CAM", "LW", "CF", "ST"],
+  CF: ["CAM", "LW", "RW", "ST"],
+  ST: ["LW", "RW", "CF"],
+};
+
+const positionChangePenalty = (mainPosition: string, assignedPosition: string) => {
+  if (mainPosition === assignedPosition) return 0;
+  if (mainPosition === "GK" || assignedPosition === "GK") return 30;
+  const mirrored = [["LB", "RB"], ["LM", "RM"], ["LW", "RW"]].some((pair) => pair.includes(mainPosition) && pair.includes(assignedPosition));
+  if (mirrored) return 1;
+  if (POSITION_NEIGHBORS[mainPosition]?.includes(assignedPosition) || POSITION_NEIGHBORS[assignedPosition]?.includes(mainPosition)) return 2;
+  return positionFamily(mainPosition) === positionFamily(assignedPosition) ? 4 : 7;
+};
+
 const positionOverall = (player: Player, assignedPosition?: string) => {
   const originalOverall = displayedOverall(player);
   if (originalOverall === null) return null;
   const mainPosition = defaultPosition(player);
   const position = assignedPosition || mainPosition;
   if (position === mainPosition) return originalOverall;
-  const positionDifference = weightedPositionRating(player, position) - weightedPositionRating(player, mainPosition);
-  const goalkeeperMismatch = (position === "GK") !== (mainPosition === "GK") ? 18 : 0;
-  return Math.max(1, Math.min(99, Math.round(originalOverall + positionDifference - goalkeeperMismatch)));
+  const attributeSuitability = weightedPositionRating(player, position) - weightedPositionRating(player, mainPosition);
+  return Math.max(1, Math.min(99, Math.round(originalOverall + attributeSuitability - positionChangePenalty(mainPosition, position))));
 };
 
 const positionFit = (item: Player, slot: string) => {
@@ -433,20 +456,24 @@ const formationLabel = (positions: LineupPositions) => {
   return POSITIONS.filter((position) => counts[position]).map((position) => `${counts[position] && counts[position] > 1 ? `${counts[position]}×` : ""}${position}`).join(" · ");
 };
 
-type BalanceVector = [number, number, number, number, number, number, number];
+type BalanceVector = [number, number, number, number, number, number, number, number, number, number, number];
 type BalanceItem = { player: Player; values: BalanceVector };
 type BalanceCandidate = { first: BalanceItem[]; second: BalanceItem[]; cost: number; signature: string };
 
-const BALANCE_WEIGHTS: BalanceVector = [2, 1, 1, 1, 1, 1, 1];
-const BALANCE_SCALES: BalanceVector = [1, 5, 5, 5, 5, 5, 5];
-const FALLBACK_BALANCE_VECTOR: BalanceVector = [5.5, 75, 73, 74, 76, 66, 71];
+const BALANCE_WEIGHTS: BalanceVector = [2.2, 1, 1, 1, 1, 1, 1, 12, 5, 5, 5];
+const BALANCE_SCALES: BalanceVector = [1, 5, 5, 5, 5, 5, 5, .15, .22, .22, .22];
+const FALLBACK_BALANCE_VECTOR: BalanceVector = [5.5, 75, 73, 74, 76, 66, 71, 0, 0, 0, 0];
+const naturalRoleVector = (player: Player): [number, number, number, number] => {
+  const family = positionFamily(defaultPosition(player));
+  return [Number(family === "goalkeeper"), Number(family === "defence"), Number(family === "midfield"), Number(family === "attack")];
+};
 
 const numericBalanceVector = (player: Player): BalanceVector | null => {
   if (!player.rating) return null;
   const values = generatedCardStats(player).map(([, value]) => Number(value));
   if (values.length !== 6 || values.some((value) => !Number.isFinite(value))) return null;
   const ranking = player.customOverall ? Math.max(0, Math.min(10, (player.customOverall - 44) / 5)) : player.rating;
-  return [ranking, values[0], values[1], values[2], values[3], values[4], values[5]];
+  return [ranking, values[0], values[1], values[2], values[3], values[4], values[5], ...naturalRoleVector(player)];
 };
 
 const createBalanceItems = (players: Player[]) => {
@@ -457,7 +484,13 @@ const createBalanceItems = (players: Player[]) => {
       fallback[feature] = known.reduce((sum, values) => sum + values[feature], 0) / known.length;
     }
   }
-  return players.map((player) => ({ player, values: numericBalanceVector(player) || [...fallback] as BalanceVector }));
+  return players.map((player) => {
+    const values = numericBalanceVector(player);
+    if (values) return { player, values };
+    const fallbackValues = [...fallback] as BalanceVector;
+    fallbackValues.splice(7, 4, ...naturalRoleVector(player));
+    return { player, values: fallbackValues };
+  });
 };
 
 const balanceRng = (seed: number) => {
@@ -481,7 +514,7 @@ const shuffled = <T,>(items: T[], random: () => number) => {
 };
 
 const vectorTotal = (items: BalanceItem[]) => {
-  const total: BalanceVector = [0, 0, 0, 0, 0, 0, 0];
+  const total: BalanceVector = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   for (const item of items) {
     for (let feature = 0; feature < total.length; feature++) total[feature] += item.values[feature];
   }
@@ -593,7 +626,7 @@ const makeBalancedTeams = (players: Player[], seed: number, previousSignature = 
     let first: BalanceItem[];
     let second: BalanceItem[];
     if (restart === 0) {
-      const strength = (item: BalanceItem) => item.values.reduce((sum, value, feature) => sum + value / BALANCE_SCALES[feature] * BALANCE_WEIGHTS[feature], 0);
+      const strength = (item: BalanceItem) => item.values.slice(0, 7).reduce((sum, value, feature) => sum + value / BALANCE_SCALES[feature] * BALANCE_WEIGHTS[feature], 0);
       const ordered = [...remaining].sort((a, b) => strength(b) - strength(a) || a.player.name.localeCompare(b.player.name));
       first = [firstCaptain];
       second = [secondCaptain];
