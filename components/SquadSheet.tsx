@@ -441,14 +441,15 @@ const optimalLineupPositions = (roster: Player[], slots: string[]): LineupPositi
   const count = roster.length;
   if (!count || slots.length !== count) return result;
 
-  const score = roster.map((item) => slots.map((slot) => positionFit(item, slot) + (positionOverall(item, slot) || 0) * 2));
+  // OVR is the primary objective. Position fit only resolves lineups with the same total OVR.
+  const score = roster.map((item) => slots.map((slot) => (positionOverall(item, slot) || 0) * 1_000_000 + positionFit(item, slot)));
   const maximum = Math.max(...score.flat());
   const playerPotential = Array.from({ length: count + 1 }, () => 0);
   const slotPotential = Array.from({ length: count + 1 }, () => 0);
   const matchedPlayer = Array.from({ length: count + 1 }, () => 0);
   const previousSlot = Array.from({ length: count + 1 }, () => 0);
 
-  // Hungarian assignment finds the exact maximum-scoring player-to-position arrangement.
+  // Hungarian assignment finds the exact maximum-OVR player-to-position arrangement.
   for (let playerIndex = 1; playerIndex <= count; playerIndex++) {
     matchedPlayer[0] = playerIndex;
     let currentSlot = 0;
