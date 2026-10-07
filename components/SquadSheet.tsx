@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase-browser";
 
 const SPECIALITIES = ["Passing", "Scoring", "Shooting", "Dribbling", "Teamwork", "Goalkeeping", "Defending", "Pace", "Strength", "Heading"] as const;
 const SKILL_BADGES: Record<string, string> = {
@@ -142,6 +143,17 @@ const initialState = (): AppState => ({
   match: newMatch(),
   history: [],
   seeded: true,
+});
+
+const sharedStateFingerprint = (value: AppState) => JSON.stringify({
+  players: value.players,
+  want: value.want,
+  team: value.team,
+  balancedTeams: value.balancedTeams,
+  pool: value.pool,
+  match: value.match,
+  history: value.history,
+  seeded: value.seeded,
 });
 
 const legacyRatingToStars = (rating: number) => Math.max(1, Math.min(10, Math.round((rating - 42.5) / 5)));
@@ -849,6 +861,7 @@ export default function SquadSheet() {
   const [editId, setEditId] = useState("");
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
+  const [hydrationReady, setHydrationReady] = useState(false);
   const [accessChecked, setAccessChecked] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
@@ -856,6 +869,8 @@ export default function SquadSheet() {
   const [passwordError, setPasswordError] = useState("");
   const hydrated = useRef(false);
   const saveSequence = useRef(0);
+  const lastSyncedFingerprint = useRef("");
+  const stateFingerprint = sharedStateFingerprint(state);
 
   useEffect(() => {
     let cancelled = false;
@@ -879,36 +894,41 @@ export default function SquadSheet() {
       } catch { /* A damaged local save should not prevent Supabase from loading. */ }
 
       let remoteValue: unknown = null;
-      let legacyValue: unknown = null;
       let supabaseAvailable = false;
       try {
-        const [stateResponse, legacyResponse] = await Promise.all([
-          fetch("/api/state", { cache: "no-store" }),
-          fetch("/api/squad", { cache: "no-store" }),
-        ]);
+        const stateResponse = await fetch("/api/state", { cache: "no-store" });
         if (stateResponse.ok) {
           const payload = await stateResponse.json() as { state?: unknown };
           remoteValue = payload.state ?? null;
           supabaseAvailable = true;
         }
-        if (legacyResponse.ok) legacyValue = await legacyResponse.json();
       } catch { /* Local state remains available when the network is offline. */ }
+
+      let legacyValue: unknown = null;
+      if (!remoteValue && !localValue) {
+        try {
+          const legacyResponse = await fetch("/api/squad", { cache: "no-store" });
+          if (legacyResponse.ok) legacyValue = await legacyResponse.json();
+        } catch { /* A new installation can still use its seeded local state. */ }
+      }
 
       const remoteTime = remoteValue && typeof remoteValue === "object" ? Number((remoteValue as { savedAt?: number }).savedAt) || 0 : 0;
       const localTime = localValue && typeof localValue === "object" ? Number((localValue as { savedAt?: number }).savedAt) || 0 : 0;
       const savedValue = remoteValue && (!unlocked || !localValue || remoteTime >= localTime) ? remoteValue : localValue;
       const restored = savedValue ? restoreState(savedValue) : legacySquadState(legacyValue) || initialState();
       if (cancelled) return;
+      lastSyncedFingerprint.current = sharedStateFingerprint(restored);
       hydrated.current = true;
       setState(restored);
       setSyncStatus(supabaseAvailable ? "saved" : "offline");
+      setHydrationReady(true);
     };
     void load();
     return () => { cancelled = true; };
   }, [accessChecked]);
 
   useEffect(() => {
-    if (!unlocked || !hydrated.current) return;
+    if (!unlocked || !hydrated.current || !hydrationReady || stateFingerprint === lastSyncedFingerprint.current) return;
     const sequence = ++saveSequence.current;
     const payload: AppState = { ...state, savedAt: Date.now() };
     try { localStorage.setItem("sqs1", JSON.stringify(payload)); } catch { /* Storage can be unavailable in private browsing. */ }
@@ -921,30 +941,40 @@ export default function SquadSheet() {
           body: JSON.stringify(payload),
         });
         if (!response.ok) throw new Error("Supabase save failed.");
-        if (sequence === saveSequence.current) setSyncStatus("saved");
+        if (sequence === saveSequence.current) {
+          lastSyncedFingerprint.current = stateFingerprint;
+          setSyncStatus("saved");
+        }
       } catch {
         if (sequence === saveSequence.current) setSyncStatus("offline");
       }
     }, 650);
     return () => window.clearTimeout(timeout);
-  }, [state, unlocked]);
+  }, [hydrationReady, stateFingerprint, unlocked]);
 
   useEffect(() => {
-    if (!accessChecked || unlocked) return;
-    const refreshPublicView = async () => {
-      try {
-        const response = await fetch("/api/state", { cache: "no-store" });
-        if (!response.ok) return;
-        const payload = await response.json() as { state?: unknown };
-        if (!payload.state) return;
-        const refreshed = restoreState(payload.state);
-        setState((current) => ({ ...refreshed, tab: current.tab, sub: current.sub }));
-        setSyncStatus("saved");
-      } catch { /* Keep showing the last loaded public state while temporarily offline. */ }
-    };
-    const interval = window.setInterval(() => void refreshPublicView(), 15000);
-    return () => window.clearInterval(interval);
-  }, [accessChecked, unlocked]);
+    if (!accessChecked || unlocked || !hydrationReady || !supabaseBrowser) return;
+    const client = supabaseBrowser;
+    const channel = client
+      .channel("squad-sheet-state")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "squad_settings", filter: "id=eq.1" },
+        (payload) => {
+          const row = payload.new as { app_state?: unknown };
+          if (!row.app_state || typeof row.app_state !== "object" || Array.isArray(row.app_state)) return;
+          const refreshed = restoreState(row.app_state);
+          lastSyncedFingerprint.current = sharedStateFingerprint(refreshed);
+          try { localStorage.setItem("sqs1", JSON.stringify(refreshed)); } catch { /* Realtime still updates memory if browser storage is unavailable. */ }
+          setState((current) => ({ ...refreshed, tab: current.tab, sub: current.sub }));
+          setSyncStatus("saved");
+        },
+      )
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setSyncStatus("offline");
+      });
+    return () => { void client.removeChannel(channel); };
+  }, [accessChecked, hydrationReady, unlocked]);
 
   const active = useMemo(() => state.players.filter((player) => player.on !== false), [state.players]);
   const teamSize = state.want ? Math.min(state.want, active.length) : active.length;

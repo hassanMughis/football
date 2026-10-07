@@ -307,4 +307,21 @@ $$;
 revoke execute on function public.save_squad_sheet_state(jsonb) from public;
 grant execute on function public.save_squad_sheet_state(jsonb) to anon;
 
+-- The browser listens only to this single canonical state row. The block is
+-- safe to rerun and avoids polling the API for public/view-only updates.
+do $$
+begin
+  if exists (
+    select 1 from pg_publication where pubname = 'supabase_realtime'
+  ) and not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'squad_settings'
+  ) then
+    execute 'alter publication supabase_realtime add table public.squad_settings';
+  end if;
+end;
+$$;
+
 commit;
