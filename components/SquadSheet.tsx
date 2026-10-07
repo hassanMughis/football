@@ -1324,14 +1324,11 @@ export default function SquadSheet() {
       const item = player(id); if (!item) return null;
       const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
       const assignedPosition = selected.positions[id] || defaultPosition(item);
-      const teamFlagSrc = flagImageSource(liveTeamFlag || undefined, 40);
-      const playerFlagSrc = flagImageSource(item.flag, 40);
       return <button type="button" draggable={unlocked} className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}${draggedFormationId === id ? " is-dragging" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onDragStart={(event) => { if (!unlocked) return; setDraggedFormationId(id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", id); }} onDragEnd={() => setDraggedFormationId("")} onDragOver={(event) => { if (unlocked && draggedFormationId && draggedFormationId !== id) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, assignedPosition, id); }} onClick={() => unlocked && draggedFormationId && draggedFormationId !== id ? moveFormationPlayer(draggedFormationId, assignedPosition, id) : setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
         <img className="formation-mini-frame" src={item.image ? design.cleanSrc : design.src} alt="" />
         {item.image && <PlayerPhoto className="formation-mini-photo" src={item.image} alt="" />}
         <span className="formation-mini-overall">{positionOverall(item, assignedPosition) ?? "–"}</span>
         <span className="formation-mini-position">{assignedPosition}</span>
-        {liveTeamFlag !== undefined && <span className="formation-mini-team-flag match-card-flag" title="Team flag · hover to see player flag"><span className="match-card-flag__layer is-team">{teamFlagSrc ? <img src={teamFlagSrc} alt={`${selected.name} flag`} /> : initials(selected.name)}</span><span className="match-card-flag__layer is-player">{playerFlagSrc ? <img src={playerFlagSrc} alt={`${flagCountryCode(item.flag) || item.name} flag`} /> : flagEmoji(item.flag)}</span></span>}
         <span className="formation-mini-name">{item.name}</span>
         {selected.captain === id && <span className="formation-mini-captain">C</span>}
         {matchMarks(id)}
