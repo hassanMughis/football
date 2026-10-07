@@ -956,46 +956,76 @@ export default function SquadSheet() {
     if (!accessChecked || unlocked || !hydrationReady || !supabaseBrowser) return;
     const client = supabaseBrowser;
     let disposed = false;
-    const channel = client
-      .channel("squad-sheet-state")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "squad_settings", filter: "id=eq.1" },
-        (payload) => {
-          if (disposed) return;
-          const row = payload.new as { app_state?: unknown };
-          if (!row.app_state || typeof row.app_state !== "object" || Array.isArray(row.app_state)) return;
-          const refreshed = restoreState(row.app_state);
-          lastSyncedFingerprint.current = sharedStateFingerprint(refreshed);
-          try { localStorage.setItem("sqs1", JSON.stringify(refreshed)); } catch { /* Realtime still updates memory if browser storage is unavailable. */ }
-          setState((current) => ({ ...refreshed, tab: current.tab, sub: current.sub }));
-          setSyncStatus("saved");
-        },
-      )
-      .subscribe((status) => {
-        if (disposed) return;
-        if (status === "SUBSCRIBED") setSyncStatus("saved");
-        else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          setSyncStatus(navigator.onLine ? "reconnecting" : "offline");
-        }
-      });
-    const handleOffline = () => setSyncStatus("offline");
-    const handleOnline = () => {
+    let channel: ReturnType<typeof client.channel> | null = null;
+    let subscriptionGeneration = 0;
+    let restarting = false;
+    let browserOffline = !navigator.onLine;
+
+    const subscribe = () => {
+      const generation = ++subscriptionGeneration;
+      channel = client
+        .channel("squad-sheet-state")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "squad_settings", filter: "id=eq.1" },
+          (payload) => {
+            if (disposed || generation !== subscriptionGeneration) return;
+            const row = payload.new as { app_state?: unknown };
+            if (!row.app_state || typeof row.app_state !== "object" || Array.isArray(row.app_state)) return;
+            const refreshed = restoreState(row.app_state);
+            lastSyncedFingerprint.current = sharedStateFingerprint(refreshed);
+            try { localStorage.setItem("sqs1", JSON.stringify(refreshed)); } catch { /* Realtime still updates memory if browser storage is unavailable. */ }
+            setState((current) => ({ ...refreshed, tab: current.tab, sub: current.sub }));
+            setSyncStatus("saved");
+          },
+        )
+        .subscribe((status) => {
+          if (disposed || generation !== subscriptionGeneration) return;
+          if (status === "SUBSCRIBED") {
+            browserOffline = false;
+            setSyncStatus("saved");
+          } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            setSyncStatus(browserOffline ? "offline" : "reconnecting");
+          }
+        });
+    };
+
+    const restartSubscription = async () => {
+      if (disposed || restarting) return;
+      restarting = true;
       setSyncStatus("reconnecting");
-      client.realtime.connect();
+      const staleChannel = channel;
+      channel = null;
+      ++subscriptionGeneration;
+      if (staleChannel) await client.removeChannel(staleChannel);
+      if (!disposed) subscribe();
+      restarting = false;
+    };
+
+    subscribe();
+    const handleOffline = () => {
+      browserOffline = true;
+      setSyncStatus("offline");
+    };
+    const handleOnline = () => {
+      browserOffline = false;
+      void restartSubscription();
     };
     const handleVisibility = () => {
-      if (document.visibilityState === "visible" && !client.realtime.isConnected()) handleOnline();
+      if (document.visibilityState === "visible" && (!client.realtime.isConnected() || channel?.state !== "joined")) {
+        void restartSubscription();
+      }
     };
     window.addEventListener("offline", handleOffline);
     window.addEventListener("online", handleOnline);
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       disposed = true;
+      ++subscriptionGeneration;
       window.removeEventListener("offline", handleOffline);
       window.removeEventListener("online", handleOnline);
       document.removeEventListener("visibilitychange", handleVisibility);
-      void client.removeChannel(channel);
+      if (channel) void client.removeChannel(channel);
     };
   }, [accessChecked, hydrationReady, unlocked]);
 
