@@ -233,8 +233,8 @@ async function readDatabaseState() {
     team: matchIds.length ? { ids: matchIds, captain: captain1 } : null,
     balancedTeams: firstIds.length || secondIds.length ? {
       ...baseBalance,
-      team1: { name: settings.team_1_name, ids: firstIds, captain: captain1, positions: positions1 },
-      team2: { name: settings.team_2_name, ids: secondIds, captain: captain2, positions: positions2 },
+      team1: { ...baseTeam1, name: settings.team_1_name, ids: firstIds, captain: captain1, positions: positions1 },
+      team2: { ...baseTeam2, name: settings.team_2_name, ids: secondIds, captain: captain2, positions: positions2 },
     } : null,
     match: {
       ...baseMatch,
