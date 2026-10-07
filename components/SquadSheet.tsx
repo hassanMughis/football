@@ -75,10 +75,27 @@ type BalancedTeams = {
   seed: number;
   cost: number;
 };
-type Match = { opp: string; us: string; them: number; ev: Goal[]; motm: string; st: "Live" | "Full-time" };
+type MatchPauseReason = "" | "break" | "half-time" | "time";
+type Match = {
+  opp: string;
+  us: string;
+  them: number;
+  ev: Goal[];
+  motm: string;
+  st: "Live" | "Full-time";
+  scheduledFor?: string;
+  startedAt?: number;
+  timerStartedAt?: number;
+  elapsedSeconds?: number;
+  halfTimeTaken?: boolean;
+  pauseReason?: MatchPauseReason;
+};
 type MatchHistoryEntry = {
   id: string;
   endedAt: string;
+  scheduledFor?: string;
+  startedAt?: string;
+  durationSeconds?: number;
   team1: { name: string; captain: string; players: Array<{ id: string; name: string; position: string }> };
   team2: { name: string; captain: string; players: Array<{ id: string; name: string; position: string }> };
   score1: number;
@@ -115,6 +132,26 @@ const newMatch = (previous?: Match): Match => ({
   motm: "",
   st: "Live",
 });
+
+const MATCH_DURATION_SECONDS = 90 * 60;
+const HALF_TIME_SECONDS = 45 * 60;
+const elapsedMatchSeconds = (match: Match, now = Date.now()) => Math.min(MATCH_DURATION_SECONDS, Math.max(0,
+  Math.floor(match.elapsedSeconds || 0) + (match.timerStartedAt ? Math.max(0, Math.floor((now - match.timerStartedAt) / 1000)) : 0),
+));
+const formatMatchClock = (seconds: number) => {
+  const safeSeconds = Math.min(MATCH_DURATION_SECONDS, Math.max(0, Math.floor(seconds)));
+  return `${String(Math.floor(safeSeconds / 60)).padStart(2, "0")}:${String(safeSeconds % 60).padStart(2, "0")}`;
+};
+const formatKickoff = (value?: string) => value && Number.isFinite(Date.parse(value))
+  ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
+  : "";
+const datetimeLocalValue = (value?: string) => {
+  if (!value || !Number.isFinite(Date.parse(value))) return "";
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+};
+const minimumScheduleValue = () => datetimeLocalValue(new Date().toISOString());
 
 const flagEmoji = (value?: string) => {
   const flag = value?.trim() || "PK";
@@ -274,6 +311,17 @@ const restoreState = (value: unknown): AppState => {
     team1: { ...balancedTeams.team1, positions: normalizeLineupPositions(balancedTeams.team1.ids.map((id) => players.find((item) => item.id === id)).filter((item): item is Player => Boolean(item)), balancedTeams.team1.positions) },
     team2: { ...balancedTeams.team2, positions: normalizeLineupPositions(balancedTeams.team2.ids.map((id) => players.find((item) => item.id === id)).filter((item): item is Player => Boolean(item)), balancedTeams.team2.positions) },
   } : null;
+  const parsedMatch: Partial<Match> = parsed.match && typeof parsed.match === "object" ? parsed.match : {};
+  const normalizedMatch: Match = {
+    ...base.match,
+    ...parsedMatch,
+    scheduledFor: typeof parsedMatch.scheduledFor === "string" && Number.isFinite(Date.parse(parsedMatch.scheduledFor)) ? parsedMatch.scheduledFor : undefined,
+    startedAt: Number.isFinite(Number(parsedMatch.startedAt)) && Number(parsedMatch.startedAt) > 0 ? Number(parsedMatch.startedAt) : undefined,
+    timerStartedAt: Number.isFinite(Number(parsedMatch.timerStartedAt)) && Number(parsedMatch.timerStartedAt) > 0 ? Number(parsedMatch.timerStartedAt) : undefined,
+    elapsedSeconds: Math.min(MATCH_DURATION_SECONDS, Math.max(0, Math.floor(Number(parsedMatch.elapsedSeconds) || 0))),
+    halfTimeTaken: Boolean(parsedMatch.halfTimeTaken),
+    pauseReason: parsedMatch.pauseReason === "break" || parsedMatch.pauseReason === "half-time" || parsedMatch.pauseReason === "time" ? parsedMatch.pauseReason : "",
+  };
   return {
     ...base,
     ...parsed,
@@ -284,7 +332,7 @@ const restoreState = (value: unknown): AppState => {
     pool: Array.isArray(parsed.pool) ? parsed.pool.filter((item) => item && playerIds.has(String(item.id))).map((item) => players.find((player) => player.id === String(item.id))!).filter(Boolean) : null,
     tab: parsed.tab === "team" || parsed.tab === "players" ? parsed.tab : "match",
     sub: parsed.sub === "lineups" || parsed.sub === "stats" || parsed.sub === "history" || parsed.sub === "edit" ? parsed.sub : "timeline",
-    match: { ...base.match, ...(parsed.match && typeof parsed.match === "object" ? parsed.match : {}) },
+    match: normalizedMatch,
     history: Array.isArray(parsed.history) ? parsed.history.slice(0, 100) : [],
     savedAt: Number(parsed.savedAt) || undefined,
   };
@@ -852,6 +900,8 @@ export default function SquadSheet() {
   const [pickCaptainTwo, setPickCaptainTwo] = useState("");
   const [showGoal, setShowGoal] = useState(false);
   const [goalTeam, setGoalTeam] = useState<1 | 2>(1);
+  const [scheduleInput, setScheduleInput] = useState("");
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const [openHistoryId, setOpenHistoryId] = useState("");
   const [historyDetailTab, setHistoryDetailTab] = useState<HistoryDetailTab>("timeline");
   const [openRosterCardId, setOpenRosterCardId] = useState("");
@@ -951,6 +1001,23 @@ export default function SquadSheet() {
     }, 650);
     return () => window.clearTimeout(timeout);
   }, [hydrationReady, stateFingerprint, unlocked]);
+
+  useEffect(() => {
+    const needsClockTick = Boolean(state.match.timerStartedAt || (!state.match.startedAt && state.match.scheduledFor));
+    if (state.match.st !== "Live" || !needsClockTick) return;
+    const tick = () => setClockNow(Date.now());
+    tick();
+    const interval = window.setInterval(tick, 1000);
+    return () => window.clearInterval(interval);
+  }, [state.match.scheduledFor, state.match.st, state.match.startedAt, state.match.timerStartedAt]);
+
+  useEffect(() => {
+    if (state.match.st !== "Live" || !state.match.timerStartedAt || elapsedMatchSeconds(state.match, clockNow) < MATCH_DURATION_SECONDS) return;
+    setState((current) => {
+      if (!current.match.timerStartedAt || elapsedMatchSeconds(current.match) < MATCH_DURATION_SECONDS) return current;
+      return { ...current, match: { ...current.match, elapsedSeconds: MATCH_DURATION_SECONDS, timerStartedAt: undefined, pauseReason: "time" } };
+    });
+  }, [clockNow, state.match.st, state.match.timerStartedAt]);
 
   useEffect(() => {
     if (!accessChecked || unlocked || !hydrationReady || !supabaseBrowser) return;
@@ -1455,7 +1522,7 @@ export default function SquadSheet() {
       setPickCaptainTwo("");
     };
 
-    const hostMatch = () => {
+    const hostMatch = (scheduledFor?: string) => {
       if (!saved || unassigned.length) return;
       setState((current) => ({
         ...current,
@@ -1463,9 +1530,17 @@ export default function SquadSheet() {
         sub: "timeline",
         team: { ids: saved.team1.ids, captain: saved.team1.captain },
         pool: null,
-        match: { us: saved.team1.name || "Team 1", opp: saved.team2.name || "Team 2", them: 0, ev: [], motm: "", st: "Live" },
+        match: { us: saved.team1.name || "Team 1", opp: saved.team2.name || "Team 2", them: 0, ev: [], motm: "", st: "Live", scheduledFor, elapsedSeconds: 0, halfTimeTaken: false, pauseReason: "" },
       }));
       setShowGoal(false);
+      setScheduleInput("");
+    };
+
+    const scheduleMatch = () => {
+      const kickoff = new Date(scheduleInput);
+      if (!scheduleInput || !Number.isFinite(kickoff.getTime())) { window.alert("Choose a kickoff date and time first."); return; }
+      if (kickoff.getTime() <= Date.now()) { window.alert("Choose a kickoff time in the future, or use Host now."); return; }
+      hostMatch(kickoff.toISOString());
     };
 
     const teamCard = (key: "team1" | "team2") => {
@@ -1494,18 +1569,59 @@ export default function SquadSheet() {
         {unassigned.length > 0 && <div className="draft-arena" aria-live="polite"><div className={`draft-captain draft-captain-left${draftTeam === "team1" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team1.captain)?.name || saved.team1.name}</strong><small>{draftTeam === "team1" ? "Picking now" : "Waiting"}</small></div><div className="draft-ball">⚽</div><div className={`draft-captain draft-captain-right${draftTeam === "team2" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team2.captain)?.name || saved.team2.name}</strong><small>{draftTeam === "team2" ? "Picking now" : "Waiting"}</small></div><p><strong>{draftCaptain?.name || saved[draftTeam].name}&apos;s turn</strong> · choose one player</p></div>}
         <div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>{FormationBoard()}
         {unassigned.length > 0 && <div className="unassigned-card"><h2>Players waiting to be picked · {unassigned.length}</h2><p className="note">Captains take turns. Only the captain whose hand is highlighted can make the next pick.</p><div className="roster-list">{unassigned.map((item) => RosterRow({ item, rowKey: item.id, children: unlocked ? <button className="b sm pri" onClick={() => assignPlayer(item.id, draftTeam)}>Pick for {draftCaptain?.name || saved[draftTeam].name}</button> : undefined }))}</div></div>}
-        {unlocked && <div className="button-row"><button className="b pri" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length} onClick={hostMatch}>Host Team 1 vs Team 2</button></div>}{unlocked && unassigned.length > 0 && <p className="note">Complete the captain draft before hosting the match.</p>}
+        {unlocked && !state.team?.ids.length && <div className="match-host-card"><h3>Host this match</h3><p className="note">Start it today, or choose a kickoff time and let the admin start the 90-minute clock when it is due.</p><div className="button-row"><button className="b pri" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length} onClick={() => hostMatch()}>Host now</button></div><label htmlFor="match-kickoff">Schedule kickoff</label><div className="schedule-row"><input id="match-kickoff" type="datetime-local" min={minimumScheduleValue()} value={scheduleInput} onChange={(event) => setScheduleInput(event.target.value)} /><button className="b line" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length || !scheduleInput} onClick={scheduleMatch}>Schedule match</button></div></div>}
+        {unlocked && state.team?.ids.length && <div className="match-host-card"><h3>Match already hosted</h3><p className="note">Finish or delete the current match before hosting another one.</p><button className="b pri" onClick={() => setTab("match")}>Open current match</button></div>}
+        {unlocked && unassigned.length > 0 && <p className="note">Complete the captain draft before hosting or scheduling the match.</p>}
       </div>}
     </>;
   }
 
   function MatchView() {
     if (!state.team?.ids.length || state.match.st !== "Live") return <><div className="sec"><h2>No active match</h2><p className="empty">Your teams are ready. Host a match when everyone is ready to play.</p><button className="b pri" onClick={() => setTab("team")}>{state.balancedTeams ? "Review teams and host match" : "Set up teams"}</button></div>{HistoryView()}</>;
-    const match = state.match; const team1Goals = match.ev.filter((goal) => goal.team !== 2).length; const team2Goals = match.them + match.ev.filter((goal) => goal.team === 2).length; const live = match.st === "Live";
+    const match = state.match;
+    const team1Goals = match.ev.filter((goal) => goal.team !== 2).length;
+    const team2Goals = match.them + match.ev.filter((goal) => goal.team === 2).length;
+    const elapsed = elapsedMatchSeconds(match, clockNow);
+    const started = Boolean(match.startedAt);
+    const running = started && Boolean(match.timerStartedAt) && elapsed < MATCH_DURATION_SECONDS;
+    const scheduled = !started && Boolean(match.scheduledFor);
+    const kickoffDue = !scheduled || Date.parse(match.scheduledFor || "") <= clockNow;
+    const timeComplete = started && elapsed >= MATCH_DURATION_SECONDS;
+    const statusText = scheduled
+      ? kickoffDue ? "Ready to start" : `Scheduled · ${formatKickoff(match.scheduledFor)}`
+      : !started ? "Ready to start"
+      : running ? `Live · ${formatMatchClock(elapsed)}`
+      : match.pauseReason === "half-time" ? `Half-time · ${formatMatchClock(elapsed)}`
+      : timeComplete ? `90 minutes · ${formatMatchClock(elapsed)}`
+      : `Paused · ${formatMatchClock(elapsed)}`;
     const scorerLines = (teamNumber: 1 | 2) => Object.entries(match.ev.filter((goal) => (goal.team || 1) === teamNumber).reduce<Record<string, (number | null)[]>>((result, goal) => { (result[goal.s] ||= []).push(goal.m); return result; }, {}));
     const scoringIds = goalTeam === 1 ? state.team.ids : state.balancedTeams?.team2.ids || [];
+    const startMatchClock = () => {
+      if (scheduled && !kickoffDue) return;
+      const now = Date.now();
+      setClockNow(now);
+      setState((current) => ({ ...current, match: { ...current.match, startedAt: now, timerStartedAt: now, elapsedSeconds: 0, halfTimeTaken: false, pauseReason: "" } }));
+    };
+    const pauseMatchClock = (reason: MatchPauseReason) => setState((current) => {
+      if (!current.match.startedAt) return current;
+      const seconds = elapsedMatchSeconds(current.match);
+      return { ...current, match: { ...current.match, elapsedSeconds: seconds, timerStartedAt: undefined, pauseReason: seconds >= MATCH_DURATION_SECONDS ? "time" : reason } };
+    });
+    const resumeMatchClock = () => {
+      const now = Date.now();
+      setClockNow(now);
+      setState((current) => current.match.startedAt && elapsedMatchSeconds(current.match) < MATCH_DURATION_SECONDS
+        ? { ...current, match: { ...current.match, elapsedSeconds: elapsedMatchSeconds(current.match), timerStartedAt: now, pauseReason: "" } }
+        : current);
+    };
+    const takeHalfTime = () => setState((current) => {
+      if (!current.match.startedAt || current.match.halfTimeTaken) return current;
+      const seconds = elapsedMatchSeconds(current.match);
+      if (seconds < HALF_TIME_SECONDS || seconds >= MATCH_DURATION_SECONDS) return current;
+      return { ...current, match: { ...current.match, elapsedSeconds: seconds, timerStartedAt: undefined, halfTimeTaken: true, pauseReason: "half-time" } };
+    });
     const addGoal = () => {
-      if (!live) return;
+      if (!started) return;
       const scorer = (document.getElementById("gs") as HTMLSelectElement).value;
       const assist = (document.getElementById("ga") as HTMLSelectElement).value;
       const minute = Number.parseInt((document.getElementById("gm") as HTMLInputElement).value);
@@ -1513,11 +1629,11 @@ export default function SquadSheet() {
       setState((current) => ({ ...current, match: { ...current.match, ev: [...current.match.ev, { s: scorer, a: assist, m: minute >= 0 && minute <= 130 ? minute : null, team: goalTeam }] } })); setShowGoal(false);
     };
     return <>
-      <div className="hd"><div className="lg"><span>Hosted match</span><b className={live ? "live" : ""}>{live ? "Live" : "Full-time"}</b></div><div className="sb"><div className="tm"><div className="crest">{initials(match.us)}</div><div className="tn">{match.us}</div></div><div className="sc"><span>{team1Goals}</span><i>-</i><span>{team2Goals}</span></div><div className="tm"><div className="crest">{initials(match.opp)}</div><div className="tn">{match.opp}</div></div></div>
+      <div className="hd"><div className="lg"><span>{scheduled ? "Scheduled match" : "Hosted match"}</span><b className={running ? "live" : ""}>{statusText}</b></div><div className="sb"><div className="tm"><div className="crest">{initials(match.us)}</div><div className="tn">{match.us}</div></div><div className="score-clock"><div className="sc"><span>{team1Goals}</span><i>-</i><span>{team2Goals}</span></div><div className={`match-clock${running ? " is-running" : ""}`}>{started ? formatMatchClock(elapsed) : scheduled ? formatKickoff(match.scheduledFor) : "Not started"}</div></div><div className="tm"><div className="crest">{initials(match.opp)}</div><div className="tn">{match.opp}</div></div></div>
         <div className="gl"><div>{scorerLines(1).map(([id, minutes]) => { const who = player(id); const sorted = minutes.filter((m): m is number => m !== null).sort((a, b) => a - b); const suffix = sorted.length ? sorted.map((m) => `${m}'`).join(", ") : minutes.length > 1 ? `(${minutes.length})` : ""; return who ? <div key={id}>{who.name} {suffix}</div> : null; })}</div><div className="bl">{match.ev.length ? "⚽" : ""}</div><div>{scorerLines(2).map(([id, minutes]) => { const who = player(id); const sorted = minutes.filter((m): m is number => m !== null).sort((a, b) => a - b); const suffix = sorted.length ? sorted.map((m) => `${m}'`).join(", ") : minutes.length > 1 ? `(${minutes.length})` : ""; return who ? <div key={id}>{who.name} {suffix}</div> : null; })}</div></div>
       </div>
-      {unlocked ? (live ? <div className="bar"><button className="b pri" onClick={() => { setGoalTeam(1); setShowGoal(true); }}>⚽ {match.us} goal</button><button className="b pri" onClick={() => { setGoalTeam(2); setShowGoal(true); }}>⚽ {match.opp} goal</button><button className="b line" onClick={() => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.slice(0, -1) } }))}>Undo last goal</button><button className="b line" onClick={endCurrentMatch}>End & save</button></div> : <div className="bar"><span className="note">This match is finished and saved in history.</span><button className="b pri" onClick={() => { setState((current) => ({ ...current, team: null, match: newMatch(), tab: "team", sub: "timeline" })); }}>Set up next match</button></div>) : <div className="bar spectator-bar"><span className="note">View-only live match · Admin login is required to record goals or end the match.</span></div>}
-      {unlocked && showGoal && live && <div className="card" style={{ marginTop: 16 }}><h2>{goalTeam === 1 ? match.us : match.opp} goal</h2><div className="row2"><div><label htmlFor="gs">Scored by</label><select id="gs">{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div><div><label htmlFor="ga">Assist by</label><select id="ga"><option value="">No assist</option>{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div></div><label htmlFor="gm">Minute (optional)</label><input id="gm" type="number" min="0" max="130" inputMode="numeric" placeholder="e.g. 23" /><div className="button-row"><button className="b pri" onClick={addGoal}>Save goal</button><button className="b line" onClick={() => setShowGoal(false)}>Cancel</button></div></div>}
+      {unlocked ? (!started ? <div className="bar match-control-bar"><span className="match-control-copy">{scheduled && !kickoffDue ? <>Kickoff is scheduled for <strong>{formatKickoff(match.scheduledFor)}</strong>.</> : <>Teams are ready. Start the match to begin the 90-minute clock.</>}</span><button className="b pri" disabled={!kickoffDue} onClick={startMatchClock}>{kickoffDue ? "Start match" : "Waiting for kickoff"}</button></div> : <div className="bar match-control-bar"><span className="clock-pill">{statusText}</span>{running ? <button className="b line" onClick={() => pauseMatchClock("break")}>Pause</button> : !timeComplete && <button className="b pri" onClick={resumeMatchClock}>{match.pauseReason === "half-time" ? "Start second half" : "Resume"}</button>} {!match.halfTimeTaken && !timeComplete && <button className="b line" disabled={elapsed < HALF_TIME_SECONDS} title={elapsed < HALF_TIME_SECONDS ? "Available when the clock reaches 45:00" : "Pause for half-time"} onClick={takeHalfTime}>Half-time</button>}<button className="b pri" onClick={() => { setGoalTeam(1); setShowGoal(true); }}>⚽ {match.us} goal</button><button className="b pri" onClick={() => { setGoalTeam(2); setShowGoal(true); }}>⚽ {match.opp} goal</button><button className="b line" disabled={!match.ev.length} onClick={() => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.slice(0, -1) } }))}>Undo last goal</button><button className="b line" onClick={endCurrentMatch}>End & save</button></div>) : <div className="bar spectator-bar"><span className="note">{scheduled && !kickoffDue ? `Scheduled for ${formatKickoff(match.scheduledFor)}.` : !started ? "Waiting for the admin to start the match." : `${statusText} · View only.`}</span></div>}
+      {unlocked && showGoal && started && <div className="card" style={{ marginTop: 16 }}><h2>{goalTeam === 1 ? match.us : match.opp} goal</h2><div className="row2"><div><label htmlFor="gs">Scored by</label><select id="gs">{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div><div><label htmlFor="ga">Assist by</label><select id="ga"><option value="">No assist</option>{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div></div><label htmlFor="gm">Minute</label><input id="gm" type="number" min="0" max="130" inputMode="numeric" defaultValue={Math.max(1, Math.min(90, Math.ceil(elapsed / 60)))} /><div className="button-row"><button className="b pri" onClick={addGoal}>Save goal</button><button className="b line" onClick={() => setShowGoal(false)}>Cancel</button></div></div>}
       <div className="tabs match-tabs">{(["timeline", "lineups", "stats", "history", ...(unlocked ? ["edit" as const] : [])] as MatchTab[]).map((tab) => <button key={tab} onClick={() => setSub(tab)} className={state.sub === tab ? "on" : ""}>{tab}</button>)}</div>
       {(state.sub === "timeline" || (!unlocked && state.sub === "edit")) && Timeline()}{state.sub === "lineups" && <><div className="sec">{FormationBoard()}</div>{Squad({ ids: state.team.ids, title: `${match.us} lineup` })}{state.balancedTeams?.team2.ids.length ? Squad({ ids: state.balancedTeams.team2.ids, title: `${match.opp} lineup` }) : null}</>}{state.sub === "stats" && Stats()}{state.sub === "history" && HistoryView()}{unlocked && state.sub === "edit" && MatchSettings()}
       {state.sub !== "history" && state.history.length > 0 && HistoryView()}
@@ -1544,7 +1660,7 @@ export default function SquadSheet() {
       const assistCount = (id: string) => entry.goals.filter((goal) => goal.a === id).length;
       const allPlayers = [...entry.team1.players.map((item) => ({ ...item, team: entry.team1.name, captain: entry.team1.captain === item.id })), ...entry.team2.players.map((item) => ({ ...item, team: entry.team2.name, captain: entry.team2.captain === item.id }))];
       return <div className="history-detail">
-        <div className="history-fulltime">Full-time · {new Date(entry.endedAt).toLocaleString()}</div>
+        <div className="history-fulltime">Full-time · {new Date(entry.endedAt).toLocaleString()}{entry.durationSeconds !== undefined ? ` · ${formatMatchClock(entry.durationSeconds)} played` : ""}</div>
         <div className="history-detail-score"><div><div className="crest">{initials(entry.team1.name)}</div><span>{entry.team1.name}</span></div><strong>{entry.score1} <i>–</i> {entry.score2}</strong><div><div className="crest">{initials(entry.team2.name)}</div><span>{entry.team2.name}</span></div></div>
         <div className="history-scorers"><div>{entry.goals.filter((goal) => goal.team !== 2).map((goal, index) => <span key={`h1-${index}`}>{historyPlayer(entry, goal.s)?.name || "Player"}{goal.m !== null ? ` ${goal.m}'` : ""}</span>)}</div><span>⚽</span><div>{entry.goals.filter((goal) => goal.team === 2).map((goal, index) => <span key={`h2-${index}`}>{historyPlayer(entry, goal.s)?.name || "Player"}{goal.m !== null ? ` ${goal.m}'` : ""}</span>)}</div></div>
         <div className="tabs history-tabs">{(["timeline", "lineups", "stats"] as HistoryDetailTab[]).map((tab) => <button key={tab} className={historyDetailTab === tab ? "on" : ""} onClick={() => setHistoryDetailTab(tab)}>{tab}</button>)}</div>
@@ -1561,7 +1677,7 @@ export default function SquadSheet() {
   }
 
   function endCurrentMatch() {
-    if (!state.team || state.match.st !== "Live") return;
+    if (!state.team || state.match.st !== "Live" || !state.match.startedAt) return;
     if (!window.confirm("End this match and save it to history?")) return;
     const second = state.balancedTeams?.team2;
     const firstPlayers = state.team.ids.map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name, position: state.balancedTeams?.team1.positions[item.id] || defaultPosition(item) }));
@@ -1569,6 +1685,9 @@ export default function SquadSheet() {
     const entry: MatchHistoryEntry = {
       id: `m${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
       endedAt: new Date().toISOString(),
+      scheduledFor: state.match.scheduledFor,
+      startedAt: new Date(state.match.startedAt).toISOString(),
+      durationSeconds: elapsedMatchSeconds(state.match),
       team1: { name: state.match.us, captain: state.team.captain, players: firstPlayers },
       team2: { name: state.match.opp, captain: second?.captain || "", players: secondPlayers },
       score1: state.match.ev.filter((goal) => goal.team !== 2).length,
@@ -1598,7 +1717,8 @@ export default function SquadSheet() {
     const updateMatch = (patch: Partial<Match>) => setState((current) => ({ ...current, match: { ...current.match, ...patch } }));
     const allIds = [...new Set([...state.team.ids, ...(state.balancedTeams?.team2.ids || [])])];
     return <div className="sec"><h2>Match settings</h2><div className="row2"><div><label htmlFor="tn">Team 1 name</label><input id="tn" value={state.match.us} onChange={(e) => updateMatch({ us: e.target.value })} /></div><div><label htmlFor="on">Team 2 name</label><input id="on" value={state.match.opp} onChange={(e) => updateMatch({ opp: e.target.value })} /></div></div><label htmlFor="mo">Man of the match</label><select id="mo" value={state.match.motm} onChange={(e) => updateMatch({ motm: e.target.value })}><option value="">Automatic</option>{allIds.map((id) => <option value={id} key={id}>{player(id)?.name}</option>)}</select>
-      <div className="button-row">{state.match.st === "Live" && <button className="b pri" onClick={endCurrentMatch}>End & save match</button>}<button className="b line" onClick={() => { if (!window.confirm("Delete the current match? Saved history will be kept.")) return; setShowGoal(false); setState((current) => ({ ...current, team: null, match: newMatch(), tab: "team", sub: "timeline" })); }}>Delete current match</button></div></div>;
+      {!state.match.startedAt && <><label htmlFor="edit-kickoff">Scheduled kickoff (leave empty for ready now)</label><input id="edit-kickoff" type="datetime-local" min={minimumScheduleValue()} value={datetimeLocalValue(state.match.scheduledFor)} onChange={(event) => updateMatch({ scheduledFor: event.target.value ? new Date(event.target.value).toISOString() : undefined })} /></>}
+      <div className="button-row">{state.match.st === "Live" && state.match.startedAt && <button className="b pri" onClick={endCurrentMatch}>End & save match</button>}<button className="b line" onClick={() => { if (!window.confirm("Delete the current match? Saved history will be kept.")) return; setShowGoal(false); setState((current) => ({ ...current, team: null, match: newMatch(), tab: "team", sub: "timeline" })); }}>Delete current match</button></div></div>;
   }
 
   const unlock = async (event: React.FormEvent) => {
