@@ -461,7 +461,11 @@ const optimalLineupPositions = (roster: Player[], slots: string[], requiredPosit
   const slotCount = slots.length;
   if (!playerCount || slotCount < playerCount) return result;
   const count = Math.max(playerCount, slotCount);
-  const required = new Set(requiredPositions);
+  const requiredSlotIndexes = new Set<number>();
+  for (const position of requiredPositions) {
+    const slotIndex = slots.findIndex((slot, index) => slot === position && !requiredSlotIndexes.has(index));
+    if (slotIndex >= 0) requiredSlotIndexes.add(slotIndex);
+  }
   const requiredBonus = 1_000_000_000_000;
 
   // Real players may use any candidate slot. Dummy rows leave the unused positions empty.
@@ -472,7 +476,7 @@ const optimalLineupPositions = (roster: Player[], slots: string[], requiredPosit
     const slot = slots[slotIndex];
     return (positionOverall(roster[playerIndex], slot) || 0) * 1_000_000
       + positionFit(roster[playerIndex], slot)
-      + (required.has(slot) ? requiredBonus : 0);
+      + (requiredSlotIndexes.has(slotIndex) ? requiredBonus : 0);
   }));
   const maximum = Math.max(...score.flat());
   const playerPotential = Array.from({ length: count + 1 }, () => 0);
@@ -527,9 +531,30 @@ const optimalLineupPositions = (roster: Player[], slots: string[], requiredPosit
   return result;
 };
 
-const assignLineupPositions = (roster: Player[]): LineupPositions => (
-  optimalLineupPositions(roster, lineupCandidateSlots(roster.length), ["GK"])
-);
+const lineupAssignmentScore = (roster: Player[], positions: LineupPositions) => roster.reduce((total, item) => {
+  const position = positions[item.id] || defaultPosition(item);
+  return total + (positionOverall(item, position) || 0) * 1_000_000 + positionFit(item, position);
+}, 0);
+
+const assignLineupPositions = (roster: Player[]): LineupPositions => {
+  const slots = lineupCandidateSlots(roster.length);
+  if (roster.length < 3) return optimalLineupPositions(roster, slots, ["GK"]);
+  const defenders = ["LB", "CB", "RB"];
+  const attackers = ["LW", "RW", "CF", "ST"];
+  let best: LineupPositions = {};
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const defender of defenders) {
+    for (const attacker of attackers) {
+      const candidate = optimalLineupPositions(roster, slots, ["GK", defender, attacker]);
+      const score = lineupAssignmentScore(roster, candidate);
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+  }
+  return best;
+};
 
 const normalizeLineupPositions = (roster: Player[], saved: LineupPositions): LineupPositions => {
   if (!roster.length) return {};
@@ -587,24 +612,13 @@ type BalanceVector = number[];
 type BalanceItem = { player: Player; values: BalanceVector };
 type BalanceCandidate = { first: BalanceItem[]; second: BalanceItem[]; cost: number; signature: string };
 
-const BALANCE_WEIGHTS: BalanceVector = [2.4, 1, 1, 1, 1, 1, 1, 14, 6, 6, 6, ...SPECIALITIES.map(() => .7)];
-const BALANCE_SCALES: BalanceVector = [1, 5, 5, 5, 5, 5, 5, .15, .22, .22, .22, ...SPECIALITIES.map(() => .25)];
-const FALLBACK_BALANCE_VECTOR: BalanceVector = [5.5, 75, 73, 74, 76, 66, 71, 0, 0, 0, 0, ...SPECIALITIES.map(() => 0)];
-const naturalRoleVector = (player: Player): [number, number, number, number] => {
-  const family = positionFamily(defaultPosition(player));
-  return [Number(family === "goalkeeper"), Number(family === "defence"), Number(family === "midfield"), Number(family === "attack")];
-};
-const skillBalanceVector = (player: Player) => {
-  const skills = playerSkills(player);
-  return SPECIALITIES.map((skill) => Number(skills.includes(skill)));
-};
+const BALANCE_WEIGHTS: BalanceVector = [1];
+const BALANCE_SCALES: BalanceVector = [1];
+const FALLBACK_BALANCE_VECTOR: BalanceVector = [75];
 
 const numericBalanceVector = (player: Player): BalanceVector | null => {
-  if (!player.rating && !player.customOverall) return null;
-  const values = generatedCardStats(player).map(([, value]) => Number(value));
-  if (values.length !== 6 || values.some((value) => !Number.isFinite(value))) return null;
-  const ranking = player.customOverall ? Math.max(0, Math.min(10, (player.customOverall - 44) / 5)) : player.rating;
-  return [ranking, values[0], values[1], values[2], values[3], values[4], values[5], ...naturalRoleVector(player), ...skillBalanceVector(player)];
+  const overall = displayedOverall(player);
+  return overall === null ? null : [overall];
 };
 
 const createBalanceItems = (players: Player[]) => {
@@ -618,10 +632,7 @@ const createBalanceItems = (players: Player[]) => {
   return players.map((player) => {
     const values = numericBalanceVector(player);
     if (values) return { player, values };
-    const fallbackValues = [...fallback] as BalanceVector;
-    fallbackValues.splice(7, 4, ...naturalRoleVector(player));
-    fallbackValues.splice(11, SPECIALITIES.length, ...skillBalanceVector(player));
-    return { player, values: fallbackValues };
+    return { player, values: [...fallback] as BalanceVector };
   });
 };
 
@@ -666,43 +677,6 @@ const balanceCost = (first: BalanceVector, firstCount: number, second: BalanceVe
   return weightedDifference / totalWeight + largestDifference * largestDifference * .15;
 };
 
-const formationQuality = (items: BalanceItem[]) => {
-  const roster = items.map(({ player }) => player);
-  const positions = assignLineupPositions(roster);
-  let overall = 0;
-  let naturalOverall = 0;
-  let fit = 0;
-  for (const item of items) {
-    const assigned = positions[item.player.id] || defaultPosition(item.player);
-    const original = displayedOverall(item.player) ?? 44 + item.values[0] * 5;
-    const assignedOverall = positionOverall(item.player, assigned) ?? original;
-    overall += assignedOverall;
-    naturalOverall += original;
-    fit += positionFit(item.player, assigned);
-  }
-  const count = Math.max(1, items.length);
-  return { overall: overall / count, loss: Math.max(0, (naturalOverall - overall) / count), fit: fit / count };
-};
-
-const formationBalancePenalty = (first: BalanceItem[], second: BalanceItem[]) => {
-  const a = formationQuality(first);
-  const b = formationQuality(second);
-  const strengthGap = Math.abs(a.overall - b.overall) / 4;
-  const fitGap = Math.abs(a.fit - b.fit) / 24;
-  const lossGap = Math.abs(a.loss - b.loss) / 3;
-  const averageLoss = (a.loss + b.loss) / 12;
-  const weakFormation = Math.max(0, 95 - (a.fit + b.fit) / 2) / 30;
-  return strengthGap * strengthGap * .28
-    + fitGap * fitGap * .12
-    + lossGap * lossGap * .08
-    + averageLoss * averageLoss * .06
-    + weakFormation * weakFormation * .04;
-};
-
-const completeBalanceCost = (first: BalanceItem[], second: BalanceItem[], firstTotal = vectorTotal(first), secondTotal = vectorTotal(second)) => (
-  balanceCost(firstTotal, first.length, secondTotal, second.length) + formationBalancePenalty(first, second)
-);
-
 const balanceSignature = (first: BalanceItem[], second: BalanceItem[]) => {
   const firstIds = first.map(({ player }) => player.id).sort().join("|");
   const secondIds = second.map(({ player }) => player.id).sort().join("|");
@@ -714,7 +688,7 @@ const improveBalance = (firstSeed: BalanceItem[], secondSeed: BalanceItem[], loc
   let second = [...secondSeed];
   const firstTotal = vectorTotal(first);
   const secondTotal = vectorTotal(second);
-  let cost = completeBalanceCost(first, second, firstTotal, secondTotal);
+  let cost = balanceCost(firstTotal, first.length, secondTotal, second.length);
   const maxPasses = Math.min(48, first.length * second.length);
 
   for (let pass = 0; pass < maxPasses; pass++) {
@@ -732,11 +706,7 @@ const improveBalance = (firstSeed: BalanceItem[], secondSeed: BalanceItem[], loc
           nextFirst[feature] += change;
           nextSecond[feature] -= change;
         }
-        const nextFirstItems = [...first];
-        const nextSecondItems = [...second];
-        nextFirstItems[firstIndex] = second[secondIndex];
-        nextSecondItems[secondIndex] = first[firstIndex];
-        const nextCost = completeBalanceCost(nextFirstItems, nextSecondItems, nextFirst, nextSecond);
+        const nextCost = balanceCost(nextFirst, first.length, nextSecond, second.length);
         if (nextCost < bestCost - 1e-10) {
           bestCost = nextCost;
           bestFirst = firstIndex;
@@ -768,7 +738,7 @@ const improveBalance = (firstSeed: BalanceItem[], secondSeed: BalanceItem[], loc
 const rosterBalanceSeed = (players: Player[]) => {
   const fingerprint = [...players]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map((item) => `${item.id}:${item.rating}:${item.customOverall || "auto"}:${playerSkills(item).join(",")}:${defaultPosition(item)}`)
+    .map((item) => `${item.id}:${displayedOverall(item) ?? "unrated"}`)
     .join("|");
   let hash = 2166136261;
   for (const character of fingerprint) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
@@ -1236,12 +1206,15 @@ export default function SquadSheet() {
 
     const balanceSummary = (ids: string[]) => {
       const roster = sortPlayers(ids.map(player).filter((item): item is Player => Boolean(item)));
-      const rated = roster.map((item) => ({ item, values: numericBalanceVector(item) })).filter((entry): entry is { item: Player; values: BalanceVector } => entry.values !== null);
+      const rated = roster.filter((item) => displayedOverall(item) !== null);
       if (!rated.length) return { roster, text: "No rated players yet" };
-      const average = (feature: number) => Math.round(rated.reduce((sum, entry) => sum + entry.values[feature], 0) / rated.length * 10) / 10;
+      const averageOverall = Math.round(rated.reduce((sum, item) => sum + (displayedOverall(item) || 0), 0) / rated.length * 10) / 10;
       const labels = ["PAC", "SHO", "PAS", "DRI", "DEF", "PHY"];
-      const attributes = labels.map((label, index) => `${label} ${Math.round(average(index + 1))}`).join(" · ");
-      return { roster, text: `Avg rating ${average(0)}/10 · ${attributes}` };
+      const attributes = labels.map((label) => {
+        const values = rated.map((item) => Number(generatedCardStats(item).find(([name]) => name === label)?.[1])).filter(Number.isFinite);
+        return `${label} ${values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : "–"}`;
+      }).join(" · ");
+      return { roster, text: `Avg OVR ${averageOverall} · ${attributes}` };
     };
 
     const balancedRoster = (team: "team1" | "team2") => {
@@ -1277,7 +1250,7 @@ export default function SquadSheet() {
       <h2>Balanced two-team match</h2>
       <p className="note">Generate two sides using rating plus PAC, SHO, PAS, DRI, DEF and PHY. Every active player is included.</p>
       {active.length % 2 === 1 && active.length > 1 && <p className="note">There is an odd number of active players, so Team 1 will have one extra player.</p>}
-      {active.some((item) => !item.rating) && <p className="note">Unrated players use the rated squad average for balancing. Rate them for a more accurate split.</p>}
+      {active.some((item) => displayedOverall(item) === null) && <p className="note">Unrated players use the rated squad average for balancing. Rate them for a more accurate split.</p>}
       <div className="button-row">
         <button className="b pri" disabled={active.length < 2} onClick={() => generateBalance(false)}>Generate teams</button>
         <button className="b line" disabled={active.length < 2} onClick={() => generateBalance(true)}>Shuffle teams</button>
@@ -1297,7 +1270,7 @@ export default function SquadSheet() {
     if (state.team?.ids.length) return <>{balancedSection}<Squad ids={state.team.ids} title={`${state.match.us} squad`} /><div className="bar transparent-bar"><button className="b pri" onClick={() => setTab("match")}>Go to match</button><button className="b line" onClick={resetTeam}>Make a new team</button></div></>;
     return <>{balancedSection}<div className="sec"><h2>Make the team</h2><label htmlFor="sz">Players in the team (all available by default)</label><input id="sz" type="number" min="1" max="30" value={teamSize} disabled={!active.length} onChange={(e) => readSize(Number.parseInt(e.target.value) || 0)} />
       <p className="note">{active.length ? `${active.length} active player${active.length === 1 ? "" : "s"} available. Lower the number to pick fewer.` : "No active players. Add players or set some active."}</p>
-      {active.some((item) => !item.rating) && <p className="note">Some active players are not rated yet, so auto-pick puts them last. Use Rate on the Players tab.</p>}
+      {active.some((item) => displayedOverall(item) === null) && <p className="note">Some active players are not rated yet, so auto-pick puts them last. Use Rate on the Players tab.</p>}
       <div className="button-row"><button className="b pri" disabled={!active.length} onClick={() => { if (!active.length) return; const picked = sortPlayers(active).slice(0, teamSize); setState((current) => ({ ...current, team: { ids: picked.map((item) => item.id), captain: picked[0].id }, pool: null, match: newMatch(current.match) })); }}>Auto-pick best team</button></div><p className="note">Auto-pick takes the highest rated players; the best one is captain.</p></div>
       <div className="sec top-rule"><h2>Pick manually</h2><label htmlFor="cp">1. Choose the captain</label><select id="cp" value={pickCaptain} onChange={(e) => setPickCaptain(e.target.value)}><option value="">Select captain…</option>{sortPlayers(active).map((item) => <option key={item.id} value={item.id}>{item.name} ({ratingLabel(item)})</option>)}</select>
         <div className="button-row"><button className="b" disabled={!active.length} onClick={() => { if (!pickCaptain) { window.alert("Choose a captain first."); return; } setState((current) => ({ ...current, team: { ids: [pickCaptain], captain: pickCaptain }, pool: active.filter((item) => item.id !== pickCaptain), match: newMatch(current.match) })); }}>2. Start picking players</button></div></div></>;
@@ -1422,19 +1395,19 @@ export default function SquadSheet() {
       const average = rated.length ? Math.round(rated.reduce((sum, values) => sum + values[0], 0) / rated.length * 10) / 10 : null;
       return <div className="card balanced-team-card">
         {unlocked ? <><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></> : <h3 className="public-team-name">{team.name}</h3>}
-        <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{average !== null ? ` · Avg ${average}/10` : ""}</p>
+        <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{average !== null ? ` · Avg ${average} OVR` : ""}</p>
         <p className="formation-label">Formation: {formationLabel(team.positions)}</p>
         <div className="roster-list">{roster.map((item) => RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), rowKey: item.id, children: unlocked ? <><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select>{unassigned.length === 0 && team.captain !== item.id && <button className="b line sm" onClick={() => assignPlayer(item.id, other)}>Move</button>}</> : undefined }))}</div>
       </div>;
     };
 
     return <>
-      {unlocked ? <div className="sec"><h2>Set up two teams</h2><p className="note">Choose two captains, then let the app balance every active player or let the captains draft one player at a time.</p>
+      {unlocked ? <div className="sec"><h2>Set up two teams</h2><p className="note">Choose two captains, then balance every active player by base OVR only. Positions are optimized separately after both rosters are fixed.</p>
         <div className="row2 captain-selects"><div><label htmlFor="captain-one">Team 1 captain</label><select id="captain-one" value={captain1} disabled={Boolean(saved)} onChange={(event) => setPickCaptain(event.target.value)}><option value="">Choose captain…</option>{sortPlayers(active).filter((item) => item.id !== captain2).map((item) => <option value={item.id} key={item.id}>{item.name} ({ratingLabel(item)})</option>)}</select></div><div><label htmlFor="captain-two">Team 2 captain</label><select id="captain-two" value={captain2} disabled={Boolean(saved)} onChange={(event) => setPickCaptainTwo(event.target.value)}><option value="">Choose captain…</option>{sortPlayers(active).filter((item) => item.id !== captain1).map((item) => <option value={item.id} key={item.id}>{item.name} ({ratingLabel(item)})</option>)}</select></div></div>
         {!saved ? <div className="button-row"><button className="b pri" disabled={active.length < 2} onClick={() => generateTeams(false)}>Auto-pick balanced teams</button><button className="b line" disabled={active.length < 2} onClick={startManualPick}>Pick manually</button></div> : <div className="button-row"><button className="b" onClick={() => generateTeams(true)}>Shuffle again</button><button className="b line" onClick={deleteTeams}>Delete generated teams</button></div>}
-        {active.some((item) => !item.rating) && <p className="note">Unrated players use the squad average. Add ratings for a more accurate automatic split.</p>}
+        {active.some((item) => displayedOverall(item) === null) && <p className="note">Unrated players use the squad average. Add ratings for a more accurate automatic split.</p>}
       </div> : !saved && <div className="sec"><h2>No teams yet</h2><p className="empty">An admin can log in and create the next two teams.</p></div>}
-      {saved && <div className="sec top-rule"><h2>{unlocked ? "Edit teams and positions" : "Teams"}</h2><p className="note">{unlocked ? "Positions are assigned automatically and can be changed. Captains stay on their selected side." : "View the current squads, formations and player cards."}</p>
+      {saved && <div className="sec top-rule"><h2>{unlocked ? "Edit teams and positions" : "Teams"}</h2><p className="note">{unlocked ? "After OVR-balanced teams are chosen, positions maximize lineup OVR while covering goalkeeper, defence and attack. Captains stay on their selected side." : "View the current squads, formations and player cards."}</p>
         {unassigned.length > 0 && <div className="draft-arena" aria-live="polite"><div className={`draft-captain draft-captain-left${draftTeam === "team1" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team1.captain)?.name || saved.team1.name}</strong><small>{draftTeam === "team1" ? "Picking now" : "Waiting"}</small></div><div className="draft-ball">⚽</div><div className={`draft-captain draft-captain-right${draftTeam === "team2" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team2.captain)?.name || saved.team2.name}</strong><small>{draftTeam === "team2" ? "Picking now" : "Waiting"}</small></div><p><strong>{draftCaptain?.name || saved[draftTeam].name}&apos;s turn</strong> · choose one player</p></div>}
         <div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>{FormationBoard()}
         {unassigned.length > 0 && <div className="unassigned-card"><h2>Players waiting to be picked · {unassigned.length}</h2><p className="note">Captains take turns. Only the captain whose hand is highlighted can make the next pick.</p><div className="roster-list">{unassigned.map((item) => RosterRow({ item, rowKey: item.id, children: unlocked ? <button className="b sm pri" onClick={() => assignPlayer(item.id, draftTeam)}>Pick for {draftCaptain?.name || saved[draftTeam].name}</button> : undefined }))}</div></div>}
