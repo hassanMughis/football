@@ -100,7 +100,7 @@ type AppState = {
   savedAt?: number;
 };
 
-type SyncStatus = "loading" | "saving" | "saved" | "offline";
+type SyncStatus = "loading" | "saving" | "saved" | "reconnecting" | "offline";
 type LegacySquad = {
   players?: Array<{ id: number; name: string; rating: number; available: boolean; team: 0 | 1 | 2; imageUrl?: string | null }>;
   team1Name?: string;
@@ -955,12 +955,14 @@ export default function SquadSheet() {
   useEffect(() => {
     if (!accessChecked || unlocked || !hydrationReady || !supabaseBrowser) return;
     const client = supabaseBrowser;
+    let disposed = false;
     const channel = client
       .channel("squad-sheet-state")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "squad_settings", filter: "id=eq.1" },
         (payload) => {
+          if (disposed) return;
           const row = payload.new as { app_state?: unknown };
           if (!row.app_state || typeof row.app_state !== "object" || Array.isArray(row.app_state)) return;
           const refreshed = restoreState(row.app_state);
@@ -971,9 +973,30 @@ export default function SquadSheet() {
         },
       )
       .subscribe((status) => {
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setSyncStatus("offline");
+        if (disposed) return;
+        if (status === "SUBSCRIBED") setSyncStatus("saved");
+        else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          setSyncStatus(navigator.onLine ? "reconnecting" : "offline");
+        }
       });
-    return () => { void client.removeChannel(channel); };
+    const handleOffline = () => setSyncStatus("offline");
+    const handleOnline = () => {
+      setSyncStatus("reconnecting");
+      client.realtime.connect();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && !client.realtime.isConnected()) handleOnline();
+    };
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      disposed = true;
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      void client.removeChannel(channel);
+    };
   }, [accessChecked, hydrationReady, unlocked]);
 
   const active = useMemo(() => state.players.filter((player) => player.on !== false), [state.players]);
@@ -1570,7 +1593,9 @@ export default function SquadSheet() {
   };
   if (!accessChecked || !hydrated.current) return <div className="app access-screen"><div className="access-card"><img src="/badges/squad-sheet-fc.png" alt="Squad Sheet FC" /><p className="access-kicker">SQUAD SHEET</p><h1>Loading…</h1></div></div>;
 
-  const syncText = !unlocked ? (syncStatus === "loading" ? "Loading public view…" : syncStatus === "offline" ? "View only · Supabase offline" : "View only · Live data") : syncStatus === "loading" ? "Loading Supabase…" : syncStatus === "saving" ? "Saving…" : syncStatus === "saved" ? "Saved to Supabase" : "Saved locally · Supabase offline";
+  const syncText = !unlocked
+    ? syncStatus === "loading" ? "Loading public view…" : syncStatus === "reconnecting" ? "View only · Reconnecting…" : syncStatus === "offline" ? "View only · Supabase offline" : "View only · Live data"
+    : syncStatus === "loading" ? "Loading Supabase…" : syncStatus === "saving" ? "Saving…" : syncStatus === "saved" ? "Saved to Supabase" : syncStatus === "reconnecting" ? "Reconnecting to Supabase…" : "Saved locally · Supabase offline";
   return <div className={`app${unlocked ? " is-admin" : " is-view-only"}`}><nav className="tabs" aria-label="Main navigation">{(["match", "team", "players"] as MainTab[]).map((tab) => <button key={tab} onClick={() => setTab(tab)} className={state.tab === tab ? "on" : ""}>{tab}</button>)}</nav><div className={`sync-status is-${syncStatus}`} role="status" aria-live="polite"><span />{syncText}<button type="button" onClick={() => unlocked ? void lock() : setShowAdminLogin(true)}>{unlocked ? "Exit admin" : "Admin login"}</button></div><main>{state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : MatchView()}</main>
     {showAdminLogin && !unlocked && <div className="admin-login-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAdminLogin(false); }}><form className="access-card admin-login-card" onSubmit={unlock} role="dialog" aria-modal="true" aria-labelledby="admin-login-title">
       <button className="admin-login-close" type="button" onClick={() => setShowAdminLogin(false)} aria-label="Close admin login">×</button>

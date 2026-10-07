@@ -10,5 +10,7 @@ export const supabaseBrowser = url && key
         autoRefreshToken: false,
         detectSessionInUrl: false,
       },
+      // Keep Realtime heartbeats outside the throttled background-tab timer.
+      realtime: { worker: true },
     })
   : null;
