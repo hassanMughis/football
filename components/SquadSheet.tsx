@@ -96,8 +96,8 @@ type MatchHistoryEntry = {
   scheduledFor?: string;
   startedAt?: string;
   durationSeconds?: number;
-  team1: { name: string; captain: string; players: Array<{ id: string; name: string; position: string }> };
-  team2: { name: string; captain: string; players: Array<{ id: string; name: string; position: string }> };
+  team1: { name: string; captain: string; players: Array<{ id: string; name: string; position: string; flag?: string; image?: string }> };
+  team2: { name: string; captain: string; players: Array<{ id: string; name: string; position: string; flag?: string; image?: string }> };
   score1: number;
   score2: number;
   goals: Goal[];
@@ -153,6 +153,18 @@ const formatKickoffDelay = (scheduledFor: string, now: number) => {
   if (!hours) return `${minutes} minute${minutes === 1 ? "" : "s"} late`;
   const remainingMinutes = minutes % 60;
   return `${hours}h${remainingMinutes ? ` ${remainingMinutes}m` : ""} late`;
+};
+const scoredGoalTimeline = (goals: Goal[], openingTeam2Score = 0) => {
+  let score1 = 0;
+  let score2 = openingTeam2Score;
+  return goals
+    .map((goal, index) => ({ ...goal, index }))
+    .sort((a, b) => (a.m ?? 999) - (b.m ?? 999) || a.index - b.index)
+    .map((goal) => {
+      if ((goal.team || 1) === 1) score1 += 1;
+      else score2 += 1;
+      return { ...goal, score1, score2 };
+    });
 };
 const datetimeLocalValue = (value?: string) => {
   if (!value || !Number.isFinite(Date.parse(value))) return "";
@@ -1648,12 +1660,35 @@ export default function SquadSheet() {
     </>;
   }
 
+  function GoalTimelineCard({ goal, team1Name, team2Name, scorer, assistName, onDelete }: {
+    goal: Goal & { index: number; score1: number; score2: number };
+    team1Name: string;
+    team2Name: string;
+    scorer?: { name: string; position?: string; flag?: string; image?: string };
+    assistName?: string;
+    onDelete?: () => void;
+  }) {
+    const teamNumber = goal.team || 1;
+    const scoringTeam = teamNumber === 1 ? team1Name : team2Name;
+    const opponent = teamNumber === 1 ? team2Name : team1Name;
+    return <article className={`goal-event-card team-${teamNumber}`}>
+      <div className="goal-event-banner"><span aria-hidden="true">⚽</span><strong>GOOOAAALLL!!!</strong><b>{goal.m !== null ? `${goal.m}'` : "Goal"}</b></div>
+      <div className="goal-event-score"><strong className={teamNumber === 1 ? "scoring-team" : ""}>{team1Name}</strong><span>{goal.score1} <i>–</i> {goal.score2}</span><strong className={teamNumber === 2 ? "scoring-team" : ""}>{team2Name}</strong></div>
+      <div className="goal-event-player"><div><strong>{scorer?.name || "Player"}</strong><span>{scoringTeam}{scorer?.position ? ` · ${scorer.position}` : ""}</span>{assistName && <span className="goal-event-assist">Assist: {assistName}</span>}</div><div className="goal-event-visual">{scorer?.image && <PlayerPhoto src={scorer.image} alt={scorer.name} className="goal-event-face" />}<span className="goal-event-flag" role="img" aria-label={`${scorer?.name || "Player"} flag`}>{flagEmoji(scorer?.flag)}</span></div></div>
+      <p className="goal-event-description">Goal! {scorer?.name || "Player"} scores for {scoringTeam} against {opponent}. The score is now {goal.score1}–{goal.score2}.{assistName ? ` Assisted by ${assistName}.` : ""}</p>
+      {onDelete && <button className="b line sm goal-event-delete" onClick={onDelete}>Delete goal</button>}
+    </article>;
+  }
+
   function Timeline() {
-    const events = state.match.ev.map((goal, index) => ({ ...goal, index })).sort((a, b) => (a.m ?? 999) - (b.m ?? 999) || a.index - b.index);
-    return <div className="sec"><h2>Timeline</h2>{events.length ? events.map((goal) => {
-      const teamName = (goal.team || 1) === 1 ? state.match.us : state.match.opp;
-      return <div className="tl" key={goal.index}><div className="mn">{goal.m !== null ? `${goal.m}'` : "⚽"}</div><div className="t"><div>⚽ {player(goal.s)?.name || "?"}</div><small style={{ color: "var(--mu)" }}>{teamName}{goal.a && player(goal.a) ? ` · Assist: ${player(goal.a)?.name}` : ""}</small></div>{unlocked && state.match.st === "Live" && <button className="b line sm" onClick={() => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.filter((_, index) => index !== goal.index) } }))}>Delete</button>}</div>;
-    }) : <div className="empty">No goals yet. Use either team&apos;s goal button to record the scorer.</div>}</div>;
+    const events = scoredGoalTimeline(state.match.ev, state.match.them);
+    return <div className="sec"><h2>Timeline</h2><div className="goal-event-list">{events.length ? events.map((goal) => {
+      const scorerPlayer = player(goal.s);
+      const teamNumber = goal.team || 1;
+      const lineup = teamNumber === 1 ? state.balancedTeams?.team1 : state.balancedTeams?.team2;
+      const scorer = scorerPlayer ? { name: scorerPlayer.name, position: lineup?.positions[scorerPlayer.id] || defaultPosition(scorerPlayer), flag: scorerPlayer.flag, image: scorerPlayer.image } : undefined;
+      return <GoalTimelineCard key={goal.index} goal={goal} team1Name={state.match.us} team2Name={state.match.opp} scorer={scorer} assistName={goal.a ? player(goal.a)?.name : undefined} onDelete={unlocked && state.match.st === "Live" ? () => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.filter((_, index) => index !== goal.index) } })) : undefined} />;
+    }) : <div className="empty">No goals yet. Use either team&apos;s goal button to record the scorer.</div>}</div></div>;
   }
 
   function HistoryView() {
@@ -1666,13 +1701,15 @@ export default function SquadSheet() {
     const detail = (entry: MatchHistoryEntry) => {
       const goalCount = (id: string) => entry.goals.filter((goal) => goal.s === id).length;
       const assistCount = (id: string) => entry.goals.filter((goal) => goal.a === id).length;
+      const recordedTeam2Goals = entry.goals.filter((goal) => goal.team === 2).length;
+      const historyTimeline = scoredGoalTimeline(entry.goals, Math.max(0, entry.score2 - recordedTeam2Goals));
       const allPlayers = [...entry.team1.players.map((item) => ({ ...item, team: entry.team1.name, captain: entry.team1.captain === item.id })), ...entry.team2.players.map((item) => ({ ...item, team: entry.team2.name, captain: entry.team2.captain === item.id }))];
       return <div className="history-detail">
         <div className="history-fulltime">Full-time · {new Date(entry.endedAt).toLocaleString()}{entry.durationSeconds !== undefined ? ` · ${formatMatchClock(entry.durationSeconds)} played` : ""}</div>
         <div className="history-detail-score"><div><div className="crest">{initials(entry.team1.name)}</div><span>{entry.team1.name}</span></div><strong>{entry.score1} <i>–</i> {entry.score2}</strong><div><div className="crest">{initials(entry.team2.name)}</div><span>{entry.team2.name}</span></div></div>
         <div className="history-scorers"><div>{entry.goals.filter((goal) => goal.team !== 2).map((goal, index) => <span key={`h1-${index}`}>{historyPlayer(entry, goal.s)?.name || "Player"}{goal.m !== null ? ` ${goal.m}'` : ""}</span>)}</div><span>⚽</span><div>{entry.goals.filter((goal) => goal.team === 2).map((goal, index) => <span key={`h2-${index}`}>{historyPlayer(entry, goal.s)?.name || "Player"}{goal.m !== null ? ` ${goal.m}'` : ""}</span>)}</div></div>
         <div className="tabs history-tabs">{(["timeline", "lineups", "stats"] as HistoryDetailTab[]).map((tab) => <button key={tab} className={historyDetailTab === tab ? "on" : ""} onClick={() => setHistoryDetailTab(tab)}>{tab}</button>)}</div>
-        {historyDetailTab === "timeline" && <div className="history-detail-body">{entry.goals.length ? entry.goals.map((goal, index) => { const side = (goal.team || 1) === 1 ? entry.team1 : entry.team2; return <div className="tl" key={`${entry.id}-goal-${index}`}><div className="mn">{goal.m !== null ? `${goal.m}'` : "⚽"}</div><div className="t"><div>⚽ {historyPlayer(entry, goal.s)?.name || "Player"}</div><small>{side.name}{goal.a ? ` · Assist: ${historyPlayer(entry, goal.a)?.name || "Player"}` : ""}</small></div></div>; }) : <div className="empty">No goals were recorded.</div>}</div>}
+        {historyDetailTab === "timeline" && <div className="history-detail-body"><div className="goal-event-list">{historyTimeline.length ? historyTimeline.map((goal) => <GoalTimelineCard key={`${entry.id}-goal-${goal.index}`} goal={goal} team1Name={entry.team1.name} team2Name={entry.team2.name} scorer={historyPlayer(entry, goal.s)} assistName={goal.a ? historyPlayer(entry, goal.a)?.name : undefined} />) : <div className="empty">No goals were recorded.</div>}</div></div>}
         {historyDetailTab === "lineups" && <div className="history-lineups"><div><h3>{entry.team1.name}</h3>{entry.team1.players.map((item) => <div className="history-player" key={item.id}><span className="history-position">{item.position || "—"}</span><span className="history-player-name">{item.name}</span>{item.id === entry.team1.captain && <span>Captain</span>}</div>)}</div><div><h3>{entry.team2.name}</h3>{entry.team2.players.map((item) => <div className="history-player" key={item.id}><span className="history-position">{item.position || "—"}</span><span className="history-player-name">{item.name}</span>{item.id === entry.team2.captain && <span>Captain</span>}</div>)}</div></div>}
         {historyDetailTab === "stats" && <div className="history-detail-body"><div className="sr"><span>{entry.score1}</span><span>Goals</span><span>{entry.score2}</span></div><table><thead><tr><th>Player</th><th>Team</th><th>G</th><th>A</th></tr></thead><tbody>{allPlayers.map((item) => <tr key={`${item.team}-${item.id}`}><td>{item.name}{item.captain && <span className="cp"> (C)</span>}</td><td>{item.team}</td><td>{goalCount(item.id)}</td><td>{assistCount(item.id)}</td></tr>)}</tbody></table>{entry.motm && <p className="history-motm">Player of the match: <strong>{historyPlayer(entry, entry.motm)?.name || "Player"}</strong></p>}</div>}
       </div>;
@@ -1688,8 +1725,8 @@ export default function SquadSheet() {
     if (!state.team || state.match.st !== "Live" || !state.match.startedAt) return;
     if (!window.confirm("End this match and save it to history?")) return;
     const second = state.balancedTeams?.team2;
-    const firstPlayers = state.team.ids.map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name, position: state.balancedTeams?.team1.positions[item.id] || defaultPosition(item) }));
-    const secondPlayers = (second?.ids || []).map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name, position: second?.positions[item.id] || defaultPosition(item) }));
+    const firstPlayers = state.team.ids.map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name, position: state.balancedTeams?.team1.positions[item.id] || defaultPosition(item), flag: item.flag, image: item.image }));
+    const secondPlayers = (second?.ids || []).map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name, position: second?.positions[item.id] || defaultPosition(item), flag: item.flag, image: item.image }));
     const entry: MatchHistoryEntry = {
       id: `m${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
       endedAt: new Date().toISOString(),
