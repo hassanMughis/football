@@ -426,7 +426,8 @@ const specialityLabel = (player: Player) => playerSkills(player).join(" · ") ||
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((word) => word[0] || "").join("").toUpperCase() || "?";
 function TeamMark({ name, flag, className = "crest" }: { name: string; flag?: string; className?: string }) {
   const code = flagCountryCode(flag);
-  const source = code === "PK" ? "/flags/pk.svg" : code ? `https://flagcdn.com/w80/${code.toLowerCase()}.png` : "";
+  const uploadedSource = flag && /^(https?:\/\/|data:image\/|blob:)/i.test(flag) ? flag : "";
+  const source = uploadedSource || (code === "PK" ? "/flags/pk.svg" : code ? `https://flagcdn.com/w80/${code.toLowerCase()}.png` : "");
   return <span className={`${className}${flag ? " has-team-flag" : ""}`}>{flag ? source ? <img src={source} alt={`${name} flag`} /> : normalizeTeamFlag(flag) : initials(name)}</span>;
 }
 type MatchEventBadgeKind = "goal" | "assist" | "yellow-card" | "red-card";
@@ -959,6 +960,17 @@ async function preparePlayerImage(file: File) {
   return result.imageUrl;
 }
 
+async function uploadTeamFlag(file: File) {
+  if (file.type !== "image/png") throw new Error("Please choose a PNG flag image.");
+  if (file.size > 3 * 1024 * 1024) throw new Error("Team flag PNG files must be smaller than 3 MB.");
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch("/api/upload", { method: "POST", body: form });
+  const result = await response.json().catch(() => null) as { imageUrl?: string; error?: string } | null;
+  if (!response.ok || !result?.imageUrl) throw new Error(result?.error || "The team flag could not be uploaded.");
+  return result.imageUrl;
+}
+
 export default function SquadSheet() {
   const [state, setState] = useState<AppState>(initialState);
   const [draft, setDraft] = useState<{ rating: number; customOverall: string; skills: string[]; name: string; image: string; cardStyle: CardStyleId; position: string; flag: string }>({ rating: 0, customOverall: "", skills: [], name: "", image: "", cardStyle: "classic", position: "CM", flag: "🇵🇰" });
@@ -976,6 +988,7 @@ export default function SquadSheet() {
   const [formationTeam, setFormationTeam] = useState<1 | 2>(1);
   const [formationPlayerId, setFormationPlayerId] = useState("");
   const [draggedFormationId, setDraggedFormationId] = useState("");
+  const [teamFlagUploading, setTeamFlagUploading] = useState<"" | "team1" | "team2">("");
   const [editId, setEditId] = useState("");
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
@@ -1560,6 +1573,18 @@ export default function SquadSheet() {
       return { ...current, balancedTeams: { ...current.balancedTeams, [team]: { ...current.balancedTeams[team], ...patch } } };
     });
 
+    const changeTeamFlag = async (team: "team1" | "team2", file?: File) => {
+      if (!file) return;
+      setTeamFlagUploading(team);
+      try {
+        updateTeam(team, { flag: await uploadTeamFlag(file) });
+      } catch (reason) {
+        window.alert(reason instanceof Error ? reason.message : "The team flag could not be uploaded.");
+      } finally {
+        setTeamFlagUploading("");
+      }
+    };
+
     const toggleSubstitute = (team: "team1" | "team2", id: string) => {
       if (!saved) return;
       const selected = saved[team];
@@ -1645,7 +1670,7 @@ export default function SquadSheet() {
       const rated = roster.map(numericBalanceVector).filter((value): value is BalanceVector => value !== null);
       const average = rated.length ? Math.round(rated.reduce((sum, values) => sum + values[0], 0) / rated.length * 10) / 10 : null;
       return <div className="card balanced-team-card">
-        {unlocked ? <div className="team-identity-fields"><div><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><label htmlFor={`team-flag-${number}`}>Team flag</label><div className="team-flag-field"><TeamMark name={team.name} flag={team.flag} className="team-flag-preview" /><input id={`team-flag-${number}`} value={team.flag || ""} maxLength={8} onChange={(event) => updateTeam(key, { flag: event.target.value })} onBlur={(event) => updateTeam(key, { flag: normalizeTeamFlag(event.currentTarget.value) })} placeholder="AR, BJ or 🇦🇷" /></div></div></div> : <h3 className="public-team-name"><TeamMark name={team.name} flag={team.flag} className="team-name-flag" />{team.name}</h3>}
+        {unlocked ? <div className="team-identity-fields"><div><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><label htmlFor={`team-flag-${number}`}>Team flag</label><div className="team-flag-field"><TeamMark name={team.name} flag={team.flag} className="team-flag-preview" /><div className="team-flag-actions"><label className="b line sm photo-button">{teamFlagUploading === key ? "Uploading…" : team.flag ? "Replace PNG" : "Upload PNG"}<input id={`team-flag-${number}`} type="file" accept="image/png,.png" disabled={Boolean(teamFlagUploading)} onChange={(event) => { const file = event.target.files?.[0]; void changeTeamFlag(key, file); event.target.value = ""; }} /></label>{team.flag && <button type="button" className="b line sm" disabled={Boolean(teamFlagUploading)} onClick={() => updateTeam(key, { flag: "" })}>Remove</button>}</div></div></div></div> : <h3 className="public-team-name"><TeamMark name={team.name} flag={team.flag} className="team-name-flag" />{team.name}</h3>}
         <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{average !== null ? ` · Avg ${average} OVR` : ""}</p>
         <p className="formation-label">Formation: {formationLabel(Object.fromEntries(Object.entries(team.positions).filter(([id]) => starterIds.includes(id))))}{substitutes.length ? ` · ${substitutes.length} substitute${substitutes.length === 1 ? "" : "s"}` : ""}</p>
         <div className="roster-list">{roster.map((item) => { const isSubstitute = substitutes.includes(item.id); return RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), rowKey: item.id, children: unlocked ? <><span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select>{!state.match.startedAt && <button className="b line sm" onClick={() => toggleSubstitute(key, item.id)}>{isSubstitute ? "Make starter" : "Move to bench"}</button>}{unassigned.length === 0 && team.captain !== item.id && !state.match.startedAt && <button className="b line sm" onClick={() => assignPlayer(item.id, other)}>Move</button>}</> : <span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span> }); })}</div>
