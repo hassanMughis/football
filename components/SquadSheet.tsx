@@ -424,10 +424,14 @@ const legacySquadState = (value: unknown): AppState | null => {
 const ratingLabel = (player: Player) => player.customOverall ? `${player.customOverall} OVR` : player.rating ? `${player.rating}/10` : "Not rated";
 const specialityLabel = (player: Player) => playerSkills(player).join(" · ") || "No skills";
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((word) => word[0] || "").join("").toUpperCase() || "?";
-function TeamMark({ name, flag, className = "crest" }: { name: string; flag?: string; className?: string }) {
+const flagImageSource = (flag?: string, width = 80) => {
+  if (!flag) return "";
+  if (/^(https?:\/\/|data:image\/|blob:)/i.test(flag)) return flag;
   const code = flagCountryCode(flag);
-  const uploadedSource = flag && /^(https?:\/\/|data:image\/|blob:)/i.test(flag) ? flag : "";
-  const source = uploadedSource || (code === "PK" ? "/flags/pk.svg" : code ? `https://flagcdn.com/w80/${code.toLowerCase()}.png` : "");
+  return code === "PK" ? "/flags/pk.svg" : code ? `https://flagcdn.com/w${width}/${code.toLowerCase()}.png` : "";
+};
+function TeamMark({ name, flag, className = "crest" }: { name: string; flag?: string; className?: string }) {
+  const source = flagImageSource(flag);
   return <span className={`${className}${flag ? " has-team-flag" : ""}`}>{flag ? source ? <img src={source} alt={`${name} flag`} /> : normalizeTeamFlag(flag) : initials(name)}</span>;
 }
 type MatchEventBadgeKind = "goal" | "assist" | "yellow-card" | "red-card";
@@ -1204,10 +1208,11 @@ export default function SquadSheet() {
     })[0];
   };
 
-  function PlayerCard({ item, children, compact = false, positionOverride }: { item: Player; children?: React.ReactNode; compact?: boolean; positionOverride?: string }) {
+  function PlayerCard({ item, children, compact = false, positionOverride, flagOverride, flagLabel }: { item: Player; children?: React.ReactNode; compact?: boolean; positionOverride?: string; flagOverride?: string | null; flagLabel?: string }) {
     const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
-    const flagCode = flagCountryCode(item.flag);
-    const flagSrc = flagCode === "PK" ? "/flags/pk.svg" : flagCode ? `https://flagcdn.com/w40/${flagCode.toLowerCase()}.png` : "";
+    const hasFlagOverride = flagOverride !== undefined;
+    const visibleFlag = hasFlagOverride ? flagOverride || "" : item.flag;
+    const flagSrc = flagImageSource(visibleFlag, 40);
     const skills = playerSkills(item);
     const featuredSkill = primarySkill(item);
     const badgeSrc = SKILL_BADGES[featuredSkill] || "/badges/squad-sheet-fc.png";
@@ -1217,7 +1222,7 @@ export default function SquadSheet() {
     return <article className={`player-card${item.on === false ? " is-inactive" : ""}${compact ? " is-compact" : ""}`}>
       <div className={`player-card__visual card-theme-${design.id}`}>
         <img className="player-card__frame" src={item.image ? design.cleanSrc : design.src} alt="" aria-hidden="true" />
-        <div className="player-card__strip"><strong>{overall}</strong><span>{defaultPosition(item)}</span><span className="player-card__flag">{flagSrc ? <img src={flagSrc} alt={`${flagCode} flag`} /> : flagEmoji(item.flag)}</span><img src={badgeSrc} alt={featuredSkill ? `${featuredSkill} skill badge` : "Squad Sheet FC badge"} /></div>
+        <div className="player-card__strip"><strong>{overall}</strong><span>{defaultPosition(item)}</span><span className={`player-card__flag${hasFlagOverride ? " is-team-flag" : ""}`}>{flagSrc ? <img src={flagSrc} alt={`${flagLabel || flagCountryCode(visibleFlag) || item.name} flag`} /> : hasFlagOverride ? initials(flagLabel || "Team") : flagEmoji(visibleFlag)}</span><img src={badgeSrc} alt={featuredSkill ? `${featuredSkill} skill badge` : "Squad Sheet FC badge"} /></div>
         {secondarySkills.length > 0 && <div className="player-card__skill-stack" aria-label={`Other skills: ${secondarySkills.join(", ")}`}>{secondarySkills.map((skill) => <img key={skill} src={SKILL_BADGES[skill]} alt={`${skill} skill`} title={skill} />)}</div>}
         {positionOverride && <span className="player-card__lineup-position" title={`Assigned team position: ${positionOverride}`}>{positionOverride}</span>}
         <div className="player-card__photo">
@@ -1231,7 +1236,7 @@ export default function SquadSheet() {
     </article>;
   }
 
-  function RosterRow({ item, captain = false, lineupPosition, children, rowKey }: { item: Player; captain?: boolean; lineupPosition?: string; children?: React.ReactNode; rowKey?: React.Key }) {
+  function RosterRow({ item, captain = false, lineupPosition, flagOverride, flagLabel, children, rowKey }: { item: Player; captain?: boolean; lineupPosition?: string; flagOverride?: string | null; flagLabel?: string; children?: React.ReactNode; rowKey?: React.Key }) {
     const open = openRosterCardId === item.id;
     const currentOverall = positionOverall(item, lineupPosition);
     return <div className={`roster-entry${open ? " is-open" : ""}`} key={rowKey}>
@@ -1243,7 +1248,7 @@ export default function SquadSheet() {
         </button>
         {children && <div className="roster-actions">{children}</div>}
       </div>
-      {open && <div className="roster-card-preview">{PlayerCard({ item, compact: true, positionOverride: lineupPosition })}</div>}
+      {open && <div className="roster-card-preview">{PlayerCard({ item, compact: true, positionOverride: lineupPosition, flagOverride, flagLabel })}</div>}
     </div>;
   }
 
@@ -1251,8 +1256,10 @@ export default function SquadSheet() {
     return <div className="sec simple-squad"><h2>{title}</h2><div className="roster-list">{ids.map((id) => {
       const item = player(id); if (!item) return null;
       const captain = state.team?.captain === id || state.balancedTeams?.team1.captain === id || state.balancedTeams?.team2.captain === id;
-      const lineupPosition = state.balancedTeams?.team1.positions[id] || state.balancedTeams?.team2.positions[id] || defaultPosition(item);
-      return RosterRow({ item, captain, lineupPosition, rowKey: id });
+      const assignedTeam = state.balancedTeams?.team1.ids.includes(id) ? state.balancedTeams.team1 : state.balancedTeams?.team2.ids.includes(id) ? state.balancedTeams.team2 : undefined;
+      const lineupPosition = assignedTeam?.positions[id] || defaultPosition(item);
+      const useTeamFlag = state.match.st === "Live" && Boolean(state.team?.ids.length);
+      return RosterRow({ item, captain, lineupPosition, flagOverride: useTeamFlag ? assignedTeam?.flag || null : undefined, flagLabel: assignedTeam?.name, rowKey: id });
     })}</div></div>;
   }
 
@@ -1262,6 +1269,7 @@ export default function SquadSheet() {
     const substituteIds = selected.substitutes || [];
     const starterIds = selected.ids.filter((id) => !substituteIds.includes(id));
     const selectedPlayer = selected.ids.includes(formationPlayerId) ? player(formationPlayerId) : undefined;
+    const liveTeamFlag = state.match.st === "Live" && state.team?.ids.length ? selected.flag || null : undefined;
     const rowFor = (position: string) => ["ST", "CF"].includes(position) ? 12 : ["LW", "CAM", "RW"].includes(position) ? 31 : ["LM", "CM", "CDM", "RM"].includes(position) ? 50 : ["LB", "CB", "RB"].includes(position) ? 70 : position === "GK" ? 88 : 50;
     const fixedX = (position: string) => ({ LW: 13, LM: 11, LB: 11, RW: 87, RM: 89, RB: 89 } as Record<string, number>)[position];
     const placeItems = (items: Array<{ id: string; position: string }>) => {
@@ -1321,6 +1329,7 @@ export default function SquadSheet() {
         {item.image && <PlayerPhoto className="formation-mini-photo" src={item.image} alt="" />}
         <span className="formation-mini-overall">{positionOverall(item, assignedPosition) ?? "–"}</span>
         <span className="formation-mini-position">{assignedPosition}</span>
+        {liveTeamFlag !== undefined && <TeamMark name={selected.name} flag={liveTeamFlag || undefined} className="formation-mini-team-flag" />}
         <span className="formation-mini-name">{item.name}</span>
         {selected.captain === id && <span className="formation-mini-captain">C</span>}
         {matchMarks(id)}
@@ -1329,7 +1338,7 @@ export default function SquadSheet() {
     return <section className="formation-board">
       <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {starterIds.length}/11 starters{substituteIds.length ? ` · ${substituteIds.length} on bench` : ""} · {unlocked ? "Drag cards to move or swap" : "Select a card to view player details"}</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
       <div className={`formation-stage${selectedPlayer ? " has-selection" : ""}`}><div><div className={`formation-pitch${draggedFormationId ? " is-moving" : ""}`}><span className="pitch-box pitch-box-top" /><span className="pitch-box pitch-box-bottom" />{slotPlacements.map((slot) => <button type="button" className="formation-slot" style={{ "--formation-x": `${slot.x}%`, "--formation-y": `${slot.y}%` } as React.CSSProperties} key={slot.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, slot.position, slot.occupantId); }} onClick={() => draggedFormationId && moveFormationPlayer(draggedFormationId, slot.position, slot.occupantId)} aria-label={`Move selected player to ${slot.position}`}><span>{slot.position}</span></button>)}{placements.map(miniCard)}</div>{substituteIds.length > 0 && <div className="formation-bench"><strong>Substitutes</strong><div>{substituteIds.map((id) => { const item = player(id); if (!item) return null; return <button key={id} onClick={() => setFormationPlayerId(formationPlayerId === id ? "" : id)}><span className="bench-avatar">{item.image ? <img src={item.image} alt="" /> : initials(item.name)}</span><span>{item.name}</span>{matchMarks(id)}</button>; })}</div></div>}</div>
-      {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {substituteIds.includes(selectedPlayer.id) ? "Substitute" : selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><div className="formation-move-actions">{unlocked && !substituteIds.includes(selectedPlayer.id) && <button className={`b sm ${draggedFormationId === selectedPlayer.id ? "pri" : "line"}`} onClick={() => setDraggedFormationId(draggedFormationId === selectedPlayer.id ? "" : selectedPlayer.id)}>{draggedFormationId === selectedPlayer.id ? "Cancel move" : "Move"}</button>}<button className="b line sm" onClick={() => { setFormationPlayerId(""); setDraggedFormationId(""); }}>Close</button></div></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: substituteIds.includes(selectedPlayer.id) ? undefined : selected.positions[selectedPlayer.id] })}</aside>}</div>
+      {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {substituteIds.includes(selectedPlayer.id) ? "Substitute" : selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><div className="formation-move-actions">{unlocked && !substituteIds.includes(selectedPlayer.id) && <button className={`b sm ${draggedFormationId === selectedPlayer.id ? "pri" : "line"}`} onClick={() => setDraggedFormationId(draggedFormationId === selectedPlayer.id ? "" : selectedPlayer.id)}>{draggedFormationId === selectedPlayer.id ? "Cancel move" : "Move"}</button>}<button className="b line sm" onClick={() => { setFormationPlayerId(""); setDraggedFormationId(""); }}>Close</button></div></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: substituteIds.includes(selectedPlayer.id) ? undefined : selected.positions[selectedPlayer.id], flagOverride: liveTeamFlag, flagLabel: selected.name })}</aside>}</div>
     </section>;
   }
 
