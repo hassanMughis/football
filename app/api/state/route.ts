@@ -222,6 +222,7 @@ async function readDatabaseState() {
   const baseTeam2 = isJsonObject(baseBalance.team2) ? baseBalance.team2 : {};
   const basePositions1 = isJsonObject(baseTeam1.positions) ? baseTeam1.positions : {};
   const basePositions2 = isJsonObject(baseTeam2.positions) ? baseTeam2.positions : {};
+  const baseEvents = Array.isArray(baseMatch.ev) ? baseMatch.ev : [];
   const captain1 = rows.find((row) => row.team === 1 && row.is_captain)?.client_id || String(baseTeam1.captain || matchIds[0] || "");
   const captain2 = rows.find((row) => row.team === 2 && row.is_captain)?.client_id || String(baseTeam2.captain || secondIds[0] || "");
   const positions1 = Object.fromEntries(rows.filter((row) => row.team === 1).map((row) => [row.client_id, lineupPositions.get(row.client_id) || (typeof basePositions1[row.client_id] === "string" ? String(basePositions1[row.client_id]) : "")]).filter((entry) => entry[1]));
@@ -243,7 +244,7 @@ async function readDatabaseState() {
       them: settings.opponent_goals,
       st: settings.match_status,
       motm: settings.motm_client_id || "",
-      ev: events ? events.map((event) => ({ s: event.scorer_client_id, a: event.assist_client_id || "", m: event.minute, team: event.team_number === 2 ? 2 : 1 })) : baseMatch.ev,
+      ev: events ? events.map((event, index) => ({ ...(isJsonObject(baseEvents[index]) ? baseEvents[index] : {}), s: event.scorer_client_id, a: event.assist_client_id || "", m: event.minute, team: event.team_number === 2 ? 2 : 1 })) : baseMatch.ev,
     },
   };
 }

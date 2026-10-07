@@ -65,13 +65,13 @@ type MatchTab = "timeline" | "lineups" | "stats" | "history" | "edit";
 type HistoryDetailTab = "timeline" | "lineups" | "stats";
 type CardStyleId = typeof CARD_STYLES[number]["id"];
 type Player = { id: string; name: string; rating: number; spec: string; skills?: string[]; customOverall?: number; image?: string; cardStyle?: CardStyleId; position?: string; flag?: string; on?: boolean };
-type Goal = { s: string; a: string; m: number | null; team?: 1 | 2 };
+type Goal = { s: string; a: string; m: number | null; team?: 1 | 2; kind?: "goal" | "penalty"; message?: number };
 type MatchIncident =
-  | { id: string; type: "yellow"; playerId: string; team: 1 | 2; m: number | null }
-  | { id: string; type: "substitution"; playerOutId: string; playerInId: string; team: 1 | 2; m: number | null };
+  | { id: string; type: "yellow"; playerId: string; team: 1 | 2; m: number | null; message?: number }
+  | { id: string; type: "substitution"; playerOutId: string; playerInId: string; team: 1 | 2; m: number | null; message?: number };
 type Team = { ids: string[]; captain: string };
 type LineupPositions = Record<string, string>;
-type BalancedTeam = { name: string; ids: string[]; captain: string; positions: LineupPositions; substitutes?: string[] };
+type BalancedTeam = { name: string; flag?: string; ids: string[]; captain: string; positions: LineupPositions; substitutes?: string[] };
 type BalancedTeams = {
   team1: BalancedTeam;
   team2: BalancedTeam;
@@ -100,8 +100,8 @@ type MatchHistoryEntry = {
   scheduledFor?: string;
   startedAt?: string;
   durationSeconds?: number;
-  team1: { name: string; captain: string; substitutes?: string[]; players: Array<{ id: string; name: string; position: string; flag?: string; image?: string }> };
-  team2: { name: string; captain: string; substitutes?: string[]; players: Array<{ id: string; name: string; position: string; flag?: string; image?: string }> };
+  team1: { name: string; flag?: string; captain: string; substitutes?: string[]; players: Array<{ id: string; name: string; position: string; flag?: string; image?: string }> };
+  team2: { name: string; flag?: string; captain: string; substitutes?: string[]; players: Array<{ id: string; name: string; position: string; flag?: string; image?: string }> };
   score1: number;
   score2: number;
   goals: Goal[];
@@ -173,6 +173,28 @@ const scoredGoalTimeline = (goals: Goal[], openingTeam2Score = 0) => {
       return { ...goal, score1, score2 };
     });
 };
+type GoalMessageContext = { scorer: string; team: string; opponent: string; score: string; assist?: string; penalty: boolean };
+const GOAL_MESSAGES: Array<(context: GoalMessageContext) => string> = [
+  ({ scorer, team, score, assist, penalty }) => `${scorer} ${penalty ? "converts from the penalty spot" : "finds the net"} for ${team}. It is now ${score}.${assist ? ` Fine work from ${assist} for the assist.` : ""}`,
+  ({ scorer, team, opponent, score, assist, penalty }) => `${penalty ? "Penalty goal!" : "Goal!"} ${scorer} puts ${team} on the scoresheet against ${opponent}. The score is ${score}.${assist ? ` Assisted by ${assist}.` : ""}`,
+  ({ scorer, team, score, assist, penalty }) => `${scorer} ${penalty ? "keeps calm and scores the penalty" : "finishes the move"} for ${team}, making it ${score}.${assist ? ` ${assist} supplied the final pass.` : ""}`,
+  ({ scorer, team, score, assist, penalty }) => `${team} celebrate as ${scorer} ${penalty ? "buries the spot kick" : "scores"}. The scoreboard reads ${score}.${assist ? ` The assist goes to ${assist}.` : ""}`,
+  ({ scorer, team, opponent, score, penalty }) => `${scorer} ${penalty ? "makes no mistake from the spot" : "breaks through"} for ${team} against ${opponent}. New score: ${score}.`,
+  ({ scorer, team, score, assist, penalty }) => `${penalty ? "Confident penalty from" : "A composed finish by"} ${scorer} for ${team}. They move the score to ${score}.${assist ? ` ${assist} created the chance.` : ""}`,
+  ({ scorer, team, score, assist, penalty }) => `${scorer} ${penalty ? "sends the keeper the wrong way" : "caps the attack with a goal"} for ${team}. It is ${score}.${assist ? ` Set up by ${assist}.` : ""}`,
+  ({ scorer, team, opponent, score, penalty }) => `${penalty ? "The spot kick is in!" : "The ball is in!"} ${scorer} scores for ${team} against ${opponent}, changing the score to ${score}.`,
+  ({ scorer, team, score, assist, penalty }) => `${team} have another: ${scorer} ${penalty ? "scores from twelve yards" : "applies the finish"}. Score: ${score}.${assist ? ` Credit to ${assist} for the assist.` : ""}`,
+  ({ scorer, team, score, penalty }) => `${penalty ? "Penalty converted" : "Goal recorded"} by ${scorer} for ${team}. The match now stands at ${score}.`,
+];
+type IncidentMessageContext = { team: string; player?: string; playerIn?: string; playerOut?: string };
+const INCIDENT_MESSAGE_STYLES: Array<{ yellow: (context: IncidentMessageContext) => string; substitution: (context: IncidentMessageContext) => string }> = [
+  { yellow: ({ player, team }) => `${player} goes into the referee's book for ${team}.`, substitution: ({ playerIn, playerOut, team }) => `${playerIn} is on as a substitute for ${playerOut} for ${team}.` },
+  { yellow: ({ player, team }) => `Yellow card for ${player} of ${team} after the foul.`, substitution: ({ playerIn, playerOut, team }) => `${team} make a change: ${playerIn} replaces ${playerOut}.` },
+  { yellow: ({ player, team }) => `${player} receives a caution for ${team}.`, substitution: ({ playerIn, playerOut, team }) => `Substitution for ${team}. ${playerIn} comes on and ${playerOut} makes way.` },
+  { yellow: ({ player, team }) => `The referee shows yellow to ${player}; ${team} have a player booked.`, substitution: ({ playerIn, playerOut, team }) => `${playerIn} enters the match for ${team}, taking the place of ${playerOut}.` },
+  { yellow: ({ player, team }) => `${player} is booked following the challenge for ${team}.`, substitution: ({ playerIn, playerOut, team }) => `${team} refresh the lineup with ${playerIn} on for ${playerOut}.` },
+];
+const stableMessageIndex = (key: string, length: number) => [...key].reduce((total, character) => total + character.charCodeAt(0), 0) % length;
 const datetimeLocalValue = (value?: string) => {
   if (!value || !Number.isFinite(Date.parse(value))) return "";
   const date = new Date(value);
@@ -185,6 +207,7 @@ const flagEmoji = (value?: string) => {
   if (!/^[a-z]{2}$/i.test(flag)) return flag;
   return [...flag.toUpperCase()].map((letter) => String.fromCodePoint(0x1f1e6 + letter.charCodeAt(0) - 65)).join("");
 };
+const normalizeTeamFlag = (value?: string) => value?.trim() ? flagEmoji(value) : "";
 
 const flagCountryCode = (value?: string) => {
   const flag = value?.trim() || "PK";
@@ -327,8 +350,8 @@ const restoreState = (value: unknown): AppState => {
   const savedBalance = parsed.balancedTeams;
   const balancedTeams = savedBalance && Array.isArray(savedBalance.team1?.ids) && Array.isArray(savedBalance.team2?.ids)
     ? {
-      team1: { name: savedBalance.team1.name || "Team 1", ids: savedBalance.team1.ids.map(String).filter((id) => playerIds.has(id)), captain: String(savedBalance.team1.captain || savedBalance.team1.ids[0] || ""), positions: savedBalance.team1.positions && typeof savedBalance.team1.positions === "object" ? savedBalance.team1.positions : {}, substitutes: Array.isArray(savedBalance.team1.substitutes) ? savedBalance.team1.substitutes.map(String).filter((id) => playerIds.has(id)) : [] },
-      team2: { name: savedBalance.team2.name || "Team 2", ids: savedBalance.team2.ids.map(String).filter((id) => playerIds.has(id)), captain: String(savedBalance.team2.captain || savedBalance.team2.ids[0] || ""), positions: savedBalance.team2.positions && typeof savedBalance.team2.positions === "object" ? savedBalance.team2.positions : {}, substitutes: Array.isArray(savedBalance.team2.substitutes) ? savedBalance.team2.substitutes.map(String).filter((id) => playerIds.has(id)) : [] },
+      team1: { name: savedBalance.team1.name || "Team 1", flag: normalizeTeamFlag(savedBalance.team1.flag), ids: savedBalance.team1.ids.map(String).filter((id) => playerIds.has(id)), captain: String(savedBalance.team1.captain || savedBalance.team1.ids[0] || ""), positions: savedBalance.team1.positions && typeof savedBalance.team1.positions === "object" ? savedBalance.team1.positions : {}, substitutes: Array.isArray(savedBalance.team1.substitutes) ? savedBalance.team1.substitutes.map(String).filter((id) => playerIds.has(id)) : [] },
+      team2: { name: savedBalance.team2.name || "Team 2", flag: normalizeTeamFlag(savedBalance.team2.flag), ids: savedBalance.team2.ids.map(String).filter((id) => playerIds.has(id)), captain: String(savedBalance.team2.captain || savedBalance.team2.ids[0] || ""), positions: savedBalance.team2.positions && typeof savedBalance.team2.positions === "object" ? savedBalance.team2.positions : {}, substitutes: Array.isArray(savedBalance.team2.substitutes) ? savedBalance.team2.substitutes.map(String).filter((id) => playerIds.has(id)) : [] },
       seed: Number(savedBalance.seed) || 0,
       cost: Number(savedBalance.cost) || 0,
     }
@@ -396,6 +419,11 @@ const legacySquadState = (value: unknown): AppState | null => {
 const ratingLabel = (player: Player) => player.customOverall ? `${player.customOverall} OVR` : player.rating ? `${player.rating}/10` : "Not rated";
 const specialityLabel = (player: Player) => playerSkills(player).join(" · ") || "No skills";
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((word) => word[0] || "").join("").toUpperCase() || "?";
+function TeamMark({ name, flag, className = "crest" }: { name: string; flag?: string; className?: string }) {
+  const code = flagCountryCode(flag);
+  const source = code === "PK" ? "/flags/pk.svg" : code ? `https://flagcdn.com/w80/${code.toLowerCase()}.png` : "";
+  return <span className={`${className}${flag ? " has-team-flag" : ""}`}>{flag ? source ? <img src={source} alt={`${name} flag`} /> : normalizeTeamFlag(flag) : initials(name)}</span>;
+}
 const playerRanking = (player: Player) => player.customOverall ? Math.max(0, Math.min(10, (player.customOverall - 44) / 5)) : player.rating;
 const sortPlayers = (players: Player[]) => [...players].sort((a, b) => playerRanking(b) - playerRanking(a) || Number(playerSkills(b).includes("Teamwork")) - Number(playerSkills(a).includes("Teamwork")) || a.name.localeCompare(b.name));
 const defaultPosition = (player: Player) => player.position || ({ Scoring: "ST", Shooting: "ST", Dribbling: "LW", Passing: "CM", Teamwork: "CDM", Goalkeeping: "GK", Defending: "CB", Pace: "RW", Strength: "CDM", Heading: "ST" }[playerSkills(player)[0]] || "CM");
@@ -1378,8 +1406,8 @@ export default function SquadSheet() {
       setState((current) => ({
         ...current,
         balancedTeams: {
-          team1: { name: current.balancedTeams?.team1.name || "Team 1", ids: result.first, captain: pickCaptain || result.first[0], positions: firstPositions },
-          team2: { name: current.balancedTeams?.team2.name || "Team 2", ids: result.second, captain: pickCaptainTwo || result.second[0], positions: secondPositions },
+          team1: { name: current.balancedTeams?.team1.name || "Team 1", flag: current.balancedTeams?.team1.flag, ids: result.first, captain: pickCaptain || result.first[0], positions: firstPositions },
+          team2: { name: current.balancedTeams?.team2.name || "Team 2", flag: current.balancedTeams?.team2.flag, ids: result.second, captain: pickCaptainTwo || result.second[0], positions: secondPositions },
           seed,
           cost: result.cost,
         },
@@ -1496,8 +1524,8 @@ export default function SquadSheet() {
       setState((current) => ({
         ...current,
         balancedTeams: {
-          team1: { name: current.balancedTeams?.team1.name || "Team 1", ids: result.first, captain: captain1, positions: firstPositions },
-          team2: { name: current.balancedTeams?.team2.name || "Team 2", ids: result.second, captain: captain2, positions: secondPositions },
+          team1: { name: current.balancedTeams?.team1.name || "Team 1", flag: current.balancedTeams?.team1.flag, ids: result.first, captain: captain1, positions: firstPositions },
+          team2: { name: current.balancedTeams?.team2.name || "Team 2", flag: current.balancedTeams?.team2.flag, ids: result.second, captain: captain2, positions: secondPositions },
           seed,
           cost: result.cost,
         },
@@ -1509,8 +1537,8 @@ export default function SquadSheet() {
       setState((current) => ({
         ...current,
         balancedTeams: {
-          team1: { name: current.balancedTeams?.team1.name || "Team 1", ids: [captain1], captain: captain1, positions: { [captain1]: "GK" } },
-          team2: { name: current.balancedTeams?.team2.name || "Team 2", ids: [captain2], captain: captain2, positions: { [captain2]: "GK" } },
+          team1: { name: current.balancedTeams?.team1.name || "Team 1", flag: current.balancedTeams?.team1.flag, ids: [captain1], captain: captain1, positions: { [captain1]: "GK" } },
+          team2: { name: current.balancedTeams?.team2.name || "Team 2", flag: current.balancedTeams?.team2.flag, ids: [captain2], captain: captain2, positions: { [captain2]: "GK" } },
           seed: rosterBalanceSeed(active),
           cost: -1,
         },
@@ -1607,7 +1635,7 @@ export default function SquadSheet() {
       const rated = roster.map(numericBalanceVector).filter((value): value is BalanceVector => value !== null);
       const average = rated.length ? Math.round(rated.reduce((sum, values) => sum + values[0], 0) / rated.length * 10) / 10 : null;
       return <div className="card balanced-team-card">
-        {unlocked ? <><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></> : <h3 className="public-team-name">{team.name}</h3>}
+        {unlocked ? <div className="team-identity-fields"><div><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><label htmlFor={`team-flag-${number}`}>Team flag</label><div className="team-flag-field"><TeamMark name={team.name} flag={team.flag} className="team-flag-preview" /><input id={`team-flag-${number}`} value={team.flag || ""} maxLength={8} onChange={(event) => updateTeam(key, { flag: event.target.value })} onBlur={(event) => updateTeam(key, { flag: normalizeTeamFlag(event.currentTarget.value) })} placeholder="AR, BJ or 🇦🇷" /></div></div></div> : <h3 className="public-team-name"><TeamMark name={team.name} flag={team.flag} className="team-name-flag" />{team.name}</h3>}
         <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{average !== null ? ` · Avg ${average} OVR` : ""}</p>
         <p className="formation-label">Formation: {formationLabel(Object.fromEntries(Object.entries(team.positions).filter(([id]) => starterIds.includes(id))))}{substitutes.length ? ` · ${substitutes.length} substitute${substitutes.length === 1 ? "" : "s"}` : ""}</p>
         <div className="roster-list">{roster.map((item) => { const isSubstitute = substitutes.includes(item.id); return RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), rowKey: item.id, children: unlocked ? <><span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select>{!state.match.startedAt && <button className="b line sm" onClick={() => toggleSubstitute(key, item.id)}>{isSubstitute ? "Make starter" : "Move to bench"}</button>}{unassigned.length === 0 && team.captain !== item.id && !state.match.startedAt && <button className="b line sm" onClick={() => assignPlayer(item.id, other)}>Move</button>}</> : <span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span> }); })}</div>
@@ -1688,8 +1716,9 @@ export default function SquadSheet() {
       const scorer = (document.getElementById("gs") as HTMLSelectElement).value;
       const assist = (document.getElementById("ga") as HTMLSelectElement).value;
       const minute = Number.parseInt((document.getElementById("gm") as HTMLInputElement).value);
+      const kind = (document.getElementById("goal-kind") as HTMLSelectElement)?.value === "penalty" ? "penalty" : "goal";
       if (assist && assist === scorer) { window.alert("Scorer and assist must be different players."); return; }
-      setState((current) => ({ ...current, match: { ...current.match, ev: [...current.match.ev, { s: scorer, a: assist, m: minute >= 0 && minute <= 130 ? minute : null, team: goalTeam }] } })); setShowGoal(false);
+      setState((current) => ({ ...current, match: { ...current.match, ev: [...current.match.ev, { s: scorer, a: assist, m: minute >= 0 && minute <= 130 ? minute : null, team: goalTeam, kind, message: Math.floor(Math.random() * GOAL_MESSAGES.length) }] } })); setShowGoal(false);
     };
     const eventMinute = () => {
       const value = Number.parseInt((document.getElementById("match-event-minute") as HTMLInputElement)?.value || "");
@@ -1698,7 +1727,7 @@ export default function SquadSheet() {
     const addYellowCard = () => {
       const playerId = (document.getElementById("match-event-player") as HTMLSelectElement)?.value;
       if (!playerId) return;
-      const incident: MatchIncident = { id: `y${Date.now()}${Math.random().toString(36).slice(2, 5)}`, type: "yellow", playerId, team: matchEventTeam, m: eventMinute() };
+      const incident: MatchIncident = { id: `y${Date.now()}${Math.random().toString(36).slice(2, 5)}`, type: "yellow", playerId, team: matchEventTeam, m: eventMinute(), message: Math.floor(Math.random() * INCIDENT_MESSAGE_STYLES.length) };
       setState((current) => ({ ...current, match: { ...current.match, incidents: [...(current.match.incidents || []), incident] } }));
       setMatchEventEditor("");
     };
@@ -1706,7 +1735,7 @@ export default function SquadSheet() {
       const playerOutId = (document.getElementById("sub-player-out") as HTMLSelectElement)?.value;
       const playerInId = (document.getElementById("sub-player-in") as HTMLSelectElement)?.value;
       if (!playerOutId || !playerInId || playerOutId === playerInId) return;
-      const incident: MatchIncident = { id: `s${Date.now()}${Math.random().toString(36).slice(2, 5)}`, type: "substitution", playerOutId, playerInId, team: matchEventTeam, m: eventMinute() };
+      const incident: MatchIncident = { id: `s${Date.now()}${Math.random().toString(36).slice(2, 5)}`, type: "substitution", playerOutId, playerInId, team: matchEventTeam, m: eventMinute(), message: Math.floor(Math.random() * INCIDENT_MESSAGE_STYLES.length) };
       setState((current) => {
         if (!current.balancedTeams) return current;
         const key = matchEventTeam === 1 ? "team1" : "team2";
@@ -1719,11 +1748,11 @@ export default function SquadSheet() {
       setMatchEventEditor("");
     };
     return <>
-      <div className="hd"><div className="lg"><span>{scheduled ? "Scheduled match" : "Hosted match"}</span><b className={running ? "live" : ""}>{statusText}</b></div><div className="sb"><div className="tm"><div className="crest">{initials(match.us)}</div><div className="tn">{match.us}</div></div><div className="score-clock"><div className="sc"><span>{team1Goals}</span><i>-</i><span>{team2Goals}</span></div><div className={`match-clock${running ? " is-running" : ""}`}>{started ? formatMatchClock(elapsed) : scheduled ? kickoffDue ? kickoffDelay : formatKickoff(match.scheduledFor) : "Not started"}</div></div><div className="tm"><div className="crest">{initials(match.opp)}</div><div className="tn">{match.opp}</div></div></div>
+      <div className="hd"><div className="lg"><span>{scheduled ? "Scheduled match" : "Hosted match"}</span><b className={running ? "live" : ""}>{statusText}</b></div><div className="sb"><div className="tm"><TeamMark name={match.us} flag={state.balancedTeams?.team1.flag} /><div className="tn">{match.us}</div></div><div className="score-clock"><div className="sc"><span>{team1Goals}</span><i>-</i><span>{team2Goals}</span></div><div className={`match-clock${running ? " is-running" : ""}`}>{started ? formatMatchClock(elapsed) : scheduled ? kickoffDue ? kickoffDelay : formatKickoff(match.scheduledFor) : "Not started"}</div></div><div className="tm"><TeamMark name={match.opp} flag={state.balancedTeams?.team2.flag} /><div className="tn">{match.opp}</div></div></div>
         <div className="gl"><div>{scorerLines(1).map(([id, minutes]) => { const who = player(id); const sorted = minutes.filter((m): m is number => m !== null).sort((a, b) => a - b); const suffix = sorted.length ? sorted.map((m) => `${m}'`).join(", ") : minutes.length > 1 ? `(${minutes.length})` : ""; return who ? <div key={id}>{who.name} {suffix}</div> : null; })}</div><div className="bl">{match.ev.length ? "⚽" : ""}</div><div>{scorerLines(2).map(([id, minutes]) => { const who = player(id); const sorted = minutes.filter((m): m is number => m !== null).sort((a, b) => a - b); const suffix = sorted.length ? sorted.map((m) => `${m}'`).join(", ") : minutes.length > 1 ? `(${minutes.length})` : ""; return who ? <div key={id}>{who.name} {suffix}</div> : null; })}</div></div>
       </div>
       {unlocked ? (!started ? <div className="bar match-control-bar"><span className="match-control-copy">{scheduled ? kickoffDue ? <>Kickoff was <strong>{formatKickoff(match.scheduledFor)}</strong>. It is <strong>{kickoffDelay}</strong>, but the 90-minute clock is still waiting for you.</> : <>Kickoff is scheduled for <strong>{formatKickoff(match.scheduledFor)}</strong>. The timer will wait for the admin.</> : <>Teams are ready. Start the match to begin the 90-minute clock.</>}</span><button className="b pri" disabled={!kickoffDue} onClick={startMatchClock}>{kickoffDue ? "Start match" : "Waiting for kickoff"}</button></div> : <div className="bar match-control-bar"><span className="clock-pill">{statusText}</span>{running ? <button className="b line" onClick={() => pauseMatchClock("break")}>Pause</button> : !timeComplete && <button className="b pri" onClick={resumeMatchClock}>{match.pauseReason === "half-time" ? "Start second half" : "Resume"}</button>} {!match.halfTimeTaken && !timeComplete && <button className="b line" disabled={elapsed < HALF_TIME_SECONDS} title={elapsed < HALF_TIME_SECONDS ? "Available when the clock reaches 45:00" : "Pause for half-time"} onClick={takeHalfTime}>Half-time</button>}<button className="b pri" onClick={() => { setMatchEventEditor(""); setGoalTeam(1); setShowGoal(true); }}>⚽ {match.us} goal</button><button className="b pri" onClick={() => { setMatchEventEditor(""); setGoalTeam(2); setShowGoal(true); }}>⚽ {match.opp} goal</button><button className="b line" onClick={() => { setShowGoal(false); setMatchEventTeam(1); setMatchEventEditor("yellow"); }}>Yellow card</button><button className="b line" disabled={!anySubstitutes} onClick={() => { setShowGoal(false); const team = substituteIdsFor(1).length ? 1 : 2; setMatchEventTeam(team); setMatchEventEditor("substitution"); }}>Substitution</button><button className="b line" disabled={!match.ev.length} onClick={() => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.slice(0, -1) } }))}>Undo last goal</button><button className="b line" onClick={endCurrentMatch}>End & save</button></div>) : <div className="bar spectator-bar"><span className="note">{scheduled ? kickoffDue ? `Kickoff is ${kickoffDelay}. Waiting for the admin to start the match.` : `Scheduled for ${formatKickoff(match.scheduledFor)}. The timer has not started.` : !started ? "Waiting for the admin to start the match." : `${statusText} · View only.`}</span></div>}
-      {unlocked && showGoal && started && <div className="card" style={{ marginTop: 16 }}><h2>{goalTeam === 1 ? match.us : match.opp} goal</h2><div className="row2"><div><label htmlFor="gs">Scored by</label><select id="gs">{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div><div><label htmlFor="ga">Assist by</label><select id="ga"><option value="">No assist</option>{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div></div><label htmlFor="gm">Minute</label><input id="gm" type="number" min="0" max="130" inputMode="numeric" defaultValue={Math.max(1, Math.min(90, Math.ceil(elapsed / 60)))} /><div className="button-row"><button className="b pri" onClick={addGoal}>Save goal</button><button className="b line" onClick={() => setShowGoal(false)}>Cancel</button></div></div>}
+      {unlocked && showGoal && started && <div className="card" style={{ marginTop: 16 }}><h2>{goalTeam === 1 ? match.us : match.opp} goal</h2><div className="row2"><div><label htmlFor="gs">Scored by</label><select id="gs">{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div><div><label htmlFor="ga">Assist by</label><select id="ga"><option value="">No assist</option>{scoringIds.map((id) => <option key={id} value={id}>{player(id)?.name}</option>)}</select></div></div><div className="row2"><div><label htmlFor="goal-kind">Goal type</label><select id="goal-kind"><option value="goal">Normal goal</option><option value="penalty">Penalty goal</option></select></div><div><label htmlFor="gm">Minute</label><input id="gm" type="number" min="0" max="130" inputMode="numeric" defaultValue={Math.max(1, Math.min(90, Math.ceil(elapsed / 60)))} /></div></div><div className="button-row"><button className="b pri" onClick={addGoal}>Save goal</button><button className="b line" onClick={() => setShowGoal(false)}>Cancel</button></div></div>}
       {unlocked && matchEventEditor && started && <div className="card match-event-editor" style={{ marginTop: 16 }}><h2>{matchEventEditor === "yellow" ? "Record yellow card" : "Record substitution"}</h2><label htmlFor="match-event-team">Team</label><select id="match-event-team" value={matchEventTeam} onChange={(event) => setMatchEventTeam(Number(event.target.value) === 2 ? 2 : 1)}><option value={1}>{match.us}</option><option value={2}>{match.opp}</option></select>{matchEventEditor === "yellow" ? <><label htmlFor="match-event-player">Player</label><select id="match-event-player">{matchEventPlayerIds.map((id) => <option value={id} key={id}>{player(id)?.name}</option>)}</select></> : matchEventSubstituteIds.length ? <div className="row2"><div><label htmlFor="sub-player-out">Player off</label><select id="sub-player-out">{matchEventPlayerIds.map((id) => <option value={id} key={id}>{player(id)?.name}</option>)}</select></div><div><label htmlFor="sub-player-in">Player on</label><select id="sub-player-in">{matchEventSubstituteIds.map((id) => <option value={id} key={id}>{player(id)?.name}</option>)}</select></div></div> : <p className="empty">This team has no players on the substitute bench.</p>}<label htmlFor="match-event-minute">Minute</label><input id="match-event-minute" type="number" min="0" max="130" inputMode="numeric" defaultValue={Math.max(1, Math.min(90, Math.ceil(elapsed / 60)))} /><div className="button-row"><button className="b pri" disabled={matchEventEditor === "substitution" ? !matchEventPlayerIds.length || !matchEventSubstituteIds.length : !matchEventPlayerIds.length} onClick={matchEventEditor === "yellow" ? addYellowCard : addSubstitution}>Save {matchEventEditor === "yellow" ? "yellow card" : "substitution"}</button><button className="b line" onClick={() => setMatchEventEditor("")}>Cancel</button></div></div>}
       <div className="tabs match-tabs">{(["timeline", "lineups", "stats", "history", ...(unlocked ? ["edit" as const] : [])] as MatchTab[]).map((tab) => <button key={tab} onClick={() => setSub(tab)} className={state.sub === tab ? "on" : ""}>{tab}</button>)}</div>
       {(state.sub === "timeline" || (!unlocked && state.sub === "edit")) && Timeline()}{state.sub === "lineups" && <><div className="sec">{FormationBoard()}</div>{Squad({ ids: onFieldIdsFor(1), title: `${match.us} starting lineup` })}{substituteIdsFor(1).length ? Squad({ ids: substituteIdsFor(1), title: `${match.us} substitutes` }) : null}{onFieldIdsFor(2).length ? Squad({ ids: onFieldIdsFor(2), title: `${match.opp} starting lineup` }) : null}{substituteIdsFor(2).length ? Squad({ ids: substituteIdsFor(2), title: `${match.opp} substitutes` }) : null}</>}{state.sub === "stats" && Stats()}{state.sub === "history" && HistoryView()}{unlocked && state.sub === "edit" && MatchSettings()}
@@ -1731,10 +1760,12 @@ export default function SquadSheet() {
     </>;
   }
 
-  function GoalTimelineCard({ goal, team1Name, team2Name, scorer, assistName, onDelete }: {
+  function GoalTimelineCard({ goal, team1Name, team2Name, team1Flag, team2Flag, scorer, assistName, onDelete }: {
     goal: Goal & { index: number; score1: number; score2: number };
     team1Name: string;
     team2Name: string;
+    team1Flag?: string;
+    team2Flag?: string;
     scorer?: { name: string; position?: string; flag?: string; image?: string };
     assistName?: string;
     onDelete?: () => void;
@@ -1742,28 +1773,37 @@ export default function SquadSheet() {
     const teamNumber = goal.team || 1;
     const scoringTeam = teamNumber === 1 ? team1Name : team2Name;
     const opponent = teamNumber === 1 ? team2Name : team1Name;
+    const scoringTeamFlag = teamNumber === 1 ? team1Flag : team2Flag;
+    const scorerName = scorer?.name || "Player";
+    const messageIndex = Number.isInteger(goal.message) ? Math.abs(goal.message || 0) % GOAL_MESSAGES.length : stableMessageIndex(`${goal.s}-${goal.m}-${goal.index}`, GOAL_MESSAGES.length);
+    const description = GOAL_MESSAGES[messageIndex]({ scorer: scorerName, team: scoringTeam, opponent, score: `${goal.score1}–${goal.score2}`, assist: assistName, penalty: goal.kind === "penalty" });
     return <article className={`goal-event-card team-${teamNumber}`}>
-      <div className="goal-event-banner"><span aria-hidden="true">⚽</span><strong>GOOOAAALLL!!!</strong><b>{goal.m === null ? "Goal" : formatMatchMinute(goal.m)}</b></div>
+      <div className="goal-event-banner"><span aria-hidden="true">⚽</span><strong>{goal.kind === "penalty" ? "PENALTY GOAL!!!" : "GOOOAAALLL!!!"}</strong><b>{goal.m === null ? "Goal" : formatMatchMinute(goal.m)}</b></div>
       <div className="goal-event-score"><strong className={teamNumber === 1 ? "scoring-team" : ""}>{team1Name}</strong><span>{goal.score1} <i>–</i> {goal.score2}</span><strong className={teamNumber === 2 ? "scoring-team" : ""}>{team2Name}</strong></div>
-      <div className="goal-event-player"><div><strong>{scorer?.name || "Player"}</strong><span>{scoringTeam}{scorer?.position ? ` · ${scorer.position}` : ""}</span>{assistName && <span className="goal-event-assist">Assist: {assistName}</span>}</div><div className="goal-event-visual">{scorer?.image && <PlayerPhoto src={scorer.image} alt={scorer.name} className="goal-event-face" />}<span className="goal-event-flag" role="img" aria-label={`${scorer?.name || "Player"} flag`}>{flagEmoji(scorer?.flag)}</span></div></div>
-      <p className="goal-event-description">Goal! {scorer?.name || "Player"} scores for {scoringTeam} against {opponent}. The score is now {goal.score1}–{goal.score2}.{assistName ? ` Assisted by ${assistName}.` : ""}</p>
+      <div className="goal-event-player"><div><strong>{scorer?.name || "Player"}</strong><span>{scoringTeam}{scorer?.position ? ` · ${scorer.position}` : ""}</span>{assistName && <span className="goal-event-assist">Assist: {assistName}</span>}</div><TeamMark name={scoringTeam} flag={scoringTeamFlag} className="goal-event-flag" /></div>
+      <p className="goal-event-description">{description}</p>
       {onDelete && <button className="b line sm goal-event-delete" onClick={onDelete}>Delete goal</button>}
     </article>;
   }
 
-  function IncidentTimelineCard({ incident, teamName, playerInfo, onDelete }: {
+  function IncidentTimelineCard({ incident, teamName, teamFlag, playerInfo, onDelete }: {
     incident: MatchIncident;
     teamName: string;
+    teamFlag?: string;
     playerInfo: (id: string) => { name: string; position?: string; flag?: string; image?: string } | undefined;
     onDelete?: () => void;
   }) {
     if (incident.type === "yellow") {
       const booked = playerInfo(incident.playerId);
-      return <article className="incident-event-card is-yellow"><div className="incident-event-head"><span className="yellow-card-icon" /><strong>YELLOW CARD</strong><b>{formatMatchMinute(incident.m)}</b></div><div className="incident-player"><span className="roster-avatar">{booked?.image ? <img src={booked.image} alt="" /> : initials(booked?.name || "P")}</span><div><strong>{booked?.name || "Player"}</strong><small>{teamName}{booked?.position ? ` · ${booked.position}` : ""}</small></div></div><p>{booked?.name || "Player"} receives a yellow card for {teamName}.</p>{onDelete && <button className="b line sm goal-event-delete" onClick={onDelete}>Delete event</button>}</article>;
+      const messageIndex = Number.isInteger(incident.message) ? Math.abs(incident.message || 0) % INCIDENT_MESSAGE_STYLES.length : stableMessageIndex(incident.id, INCIDENT_MESSAGE_STYLES.length);
+      const description = INCIDENT_MESSAGE_STYLES[messageIndex].yellow({ player: booked?.name || "Player", team: teamName });
+      return <article className="incident-event-card is-yellow"><div className="incident-event-head"><span className="yellow-card-icon" /><strong>YELLOW CARD</strong><b>{formatMatchMinute(incident.m)}</b></div><div className="incident-player"><span className="roster-avatar">{booked?.image ? <img src={booked.image} alt="" /> : initials(booked?.name || "P")}</span><div><strong>{booked?.name || "Player"}</strong><small>{teamName}{booked?.position ? ` · ${booked.position}` : ""}</small></div></div><p>{description}</p>{onDelete && <button className="b line sm goal-event-delete" onClick={onDelete}>Delete event</button>}</article>;
     }
     const playerOut = playerInfo(incident.playerOutId);
     const playerIn = playerInfo(incident.playerInId);
-    return <article className="incident-event-card is-substitution"><div className="incident-event-head"><span className="substitution-icon"><i>↑</i><i>↓</i></span><strong>SUBSTITUTION</strong><b>{formatMatchMinute(incident.m)}</b></div><div className="substitution-body"><div className="substitution-players"><div><span className="sub-label is-in">IN</span><p><strong>{playerIn?.name || "Player"}</strong><small>{teamName}{playerIn?.position ? ` · ${playerIn.position}` : ""}</small></p></div><div><span className="sub-label is-out">OUT</span><p><strong>{playerOut?.name || "Player"}</strong><small>{teamName}{playerOut?.position ? ` · ${playerOut.position}` : ""}</small></p></div></div><span className="substitution-flag" role="img" aria-label={`${teamName} player flag`}>{flagEmoji(playerIn?.flag || playerOut?.flag)}</span></div><p>{playerIn?.name || "Player"} is on as a substitute for {playerOut?.name || "Player"} for {teamName}.</p>{onDelete && <button className="b line sm goal-event-delete" onClick={onDelete}>Delete event</button>}</article>;
+    const messageIndex = Number.isInteger(incident.message) ? Math.abs(incident.message || 0) % INCIDENT_MESSAGE_STYLES.length : stableMessageIndex(incident.id, INCIDENT_MESSAGE_STYLES.length);
+    const description = INCIDENT_MESSAGE_STYLES[messageIndex].substitution({ playerIn: playerIn?.name || "Player", playerOut: playerOut?.name || "Player", team: teamName });
+    return <article className="incident-event-card is-substitution"><div className="incident-event-head"><span className="substitution-icon"><i>↑</i><i>↓</i></span><strong>SUBSTITUTION</strong><b>{formatMatchMinute(incident.m)}</b></div><div className="substitution-body"><div className="substitution-players"><div><span className="sub-label is-in">IN</span><p><strong>{playerIn?.name || "Player"}</strong><small>{teamName}{playerIn?.position ? ` · ${playerIn.position}` : ""}</small></p></div><div><span className="sub-label is-out">OUT</span><p><strong>{playerOut?.name || "Player"}</strong><small>{teamName}{playerOut?.position ? ` · ${playerOut.position}` : ""}</small></p></div></div><TeamMark name={teamName} flag={teamFlag} className="substitution-flag" /></div><p>{description}</p>{onDelete && <button className="b line sm goal-event-delete" onClick={onDelete}>Delete event</button>}</article>;
   }
 
   function Timeline() {
@@ -1774,9 +1814,9 @@ export default function SquadSheet() {
     ].sort((a, b) => a.minute - b.minute || a.order - b.order);
     const livePlayerInfo = (id: string) => { const item = player(id); if (!item) return undefined; const lineup = state.balancedTeams?.team1.ids.includes(id) ? state.balancedTeams.team1 : state.balancedTeams?.team2; return { name: item.name, position: lineup?.positions[id] || defaultPosition(item), flag: item.flag, image: item.image }; };
     return <div className="sec"><h2>Timeline</h2><div className="goal-event-list">{rows.length ? rows.map((row) => {
-      if (row.type === "incident") return <IncidentTimelineCard key={row.incident.id} incident={row.incident} teamName={row.incident.team === 1 ? state.match.us : state.match.opp} playerInfo={livePlayerInfo} onDelete={unlocked && state.match.st === "Live" && row.incident.type === "yellow" ? () => setState((current) => ({ ...current, match: { ...current.match, incidents: (current.match.incidents || []).filter((incident) => incident.id !== row.incident.id) } })) : undefined} />;
+      if (row.type === "incident") return <IncidentTimelineCard key={row.incident.id} incident={row.incident} teamName={row.incident.team === 1 ? state.match.us : state.match.opp} teamFlag={row.incident.team === 1 ? state.balancedTeams?.team1.flag : state.balancedTeams?.team2.flag} playerInfo={livePlayerInfo} onDelete={unlocked && state.match.st === "Live" && row.incident.type === "yellow" ? () => setState((current) => ({ ...current, match: { ...current.match, incidents: (current.match.incidents || []).filter((incident) => incident.id !== row.incident.id) } })) : undefined} />;
       const goal = row.goal;
-      return <GoalTimelineCard key={`goal-${goal.index}`} goal={goal} team1Name={state.match.us} team2Name={state.match.opp} scorer={livePlayerInfo(goal.s)} assistName={goal.a ? player(goal.a)?.name : undefined} onDelete={unlocked && state.match.st === "Live" ? () => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.filter((_, index) => index !== goal.index) } })) : undefined} />;
+      return <GoalTimelineCard key={`goal-${goal.index}`} goal={goal} team1Name={state.match.us} team2Name={state.match.opp} team1Flag={state.balancedTeams?.team1.flag} team2Flag={state.balancedTeams?.team2.flag} scorer={livePlayerInfo(goal.s)} assistName={goal.a ? player(goal.a)?.name : undefined} onDelete={unlocked && state.match.st === "Live" ? () => setState((current) => ({ ...current, match: { ...current.match, ev: current.match.ev.filter((_, index) => index !== goal.index) } })) : undefined} />;
     }) : <div className="empty">No match events yet. Record a goal, card or substitution during the match.</div>}</div></div>;
   }
 
@@ -1797,19 +1837,19 @@ export default function SquadSheet() {
         ...historyTimeline.map((goal) => ({ type: "goal" as const, minute: goal.m ?? 999, order: goal.index, goal })),
         ...(entry.incidents || []).map((incident, index) => ({ type: "incident" as const, minute: incident.m ?? 999, order: entry.goals.length + index, incident })),
       ].sort((a, b) => a.minute - b.minute || a.order - b.order);
-      const allPlayers = [...entry.team1.players.map((item) => ({ ...item, team: entry.team1.name, captain: entry.team1.captain === item.id })), ...entry.team2.players.map((item) => ({ ...item, team: entry.team2.name, captain: entry.team2.captain === item.id }))];
+      const historyStatsPanel = (team: MatchHistoryEntry["team1"]) => <section className="history-team-stat-panel"><h3><TeamMark name={team.name} flag={team.flag} className="history-stat-flag" />{team.name}</h3><table><thead><tr><th>Player</th><th>G</th><th>A</th><th>YC</th></tr></thead><tbody>{team.players.map((item) => <tr key={item.id}><td>{item.name}{item.id === team.captain && <span className="cp"> (C)</span>}{team.substitutes?.includes(item.id) && <small> SUB</small>}</td><td>{goalCount(item.id)}</td><td>{assistCount(item.id)}</td><td>{yellowCount(item.id)}</td></tr>)}</tbody></table></section>;
       return <div className="history-detail">
         <div className="history-fulltime">Full-time · {new Date(entry.endedAt).toLocaleString()}{entry.durationSeconds !== undefined ? ` · ${formatMatchClock(entry.durationSeconds)} played` : ""}</div>
-        <div className="history-detail-score"><div><div className="crest">{initials(entry.team1.name)}</div><span>{entry.team1.name}</span></div><strong>{entry.score1} <i>–</i> {entry.score2}</strong><div><div className="crest">{initials(entry.team2.name)}</div><span>{entry.team2.name}</span></div></div>
+        <div className="history-detail-score"><div><TeamMark name={entry.team1.name} flag={entry.team1.flag} /><span>{entry.team1.name}</span></div><strong>{entry.score1} <i>–</i> {entry.score2}</strong><div><TeamMark name={entry.team2.name} flag={entry.team2.flag} /><span>{entry.team2.name}</span></div></div>
         <div className="history-scorers"><div>{entry.goals.filter((goal) => goal.team !== 2).map((goal, index) => <span key={`h1-${index}`}>{historyPlayer(entry, goal.s)?.name || "Player"}{goal.m !== null ? ` ${goal.m}'` : ""}</span>)}</div><span>⚽</span><div>{entry.goals.filter((goal) => goal.team === 2).map((goal, index) => <span key={`h2-${index}`}>{historyPlayer(entry, goal.s)?.name || "Player"}{goal.m !== null ? ` ${goal.m}'` : ""}</span>)}</div></div>
         <div className="tabs history-tabs">{(["timeline", "lineups", "stats"] as HistoryDetailTab[]).map((tab) => <button key={tab} className={historyDetailTab === tab ? "on" : ""} onClick={() => setHistoryDetailTab(tab)}>{tab}</button>)}</div>
-        {historyDetailTab === "timeline" && <div className="history-detail-body"><div className="goal-event-list">{historyRows.length ? historyRows.map((row) => row.type === "goal" ? <GoalTimelineCard key={`${entry.id}-goal-${row.goal.index}`} goal={row.goal} team1Name={entry.team1.name} team2Name={entry.team2.name} scorer={historyPlayer(entry, row.goal.s)} assistName={row.goal.a ? historyPlayer(entry, row.goal.a)?.name : undefined} /> : <IncidentTimelineCard key={`${entry.id}-${row.incident.id}`} incident={row.incident} teamName={row.incident.team === 1 ? entry.team1.name : entry.team2.name} playerInfo={(id) => historyPlayer(entry, id)} />) : <div className="empty">No match events were recorded.</div>}</div></div>}
+        {historyDetailTab === "timeline" && <div className="history-detail-body"><div className="goal-event-list">{historyRows.length ? historyRows.map((row) => row.type === "goal" ? <GoalTimelineCard key={`${entry.id}-goal-${row.goal.index}`} goal={row.goal} team1Name={entry.team1.name} team2Name={entry.team2.name} team1Flag={entry.team1.flag} team2Flag={entry.team2.flag} scorer={historyPlayer(entry, row.goal.s)} assistName={row.goal.a ? historyPlayer(entry, row.goal.a)?.name : undefined} /> : <IncidentTimelineCard key={`${entry.id}-${row.incident.id}`} incident={row.incident} teamName={row.incident.team === 1 ? entry.team1.name : entry.team2.name} teamFlag={row.incident.team === 1 ? entry.team1.flag : entry.team2.flag} playerInfo={(id) => historyPlayer(entry, id)} />) : <div className="empty">No match events were recorded.</div>}</div></div>}
         {historyDetailTab === "lineups" && <div className="history-lineups"><div><h3>{entry.team1.name}</h3>{entry.team1.players.map((item) => <div className="history-player" key={item.id}><span className="history-position">{entry.team1.substitutes?.includes(item.id) ? "SUB" : item.position || "—"}</span><span className="history-player-name">{item.name}</span>{item.id === entry.team1.captain && <span>Captain</span>}</div>)}</div><div><h3>{entry.team2.name}</h3>{entry.team2.players.map((item) => <div className="history-player" key={item.id}><span className="history-position">{entry.team2.substitutes?.includes(item.id) ? "SUB" : item.position || "—"}</span><span className="history-player-name">{item.name}</span>{item.id === entry.team2.captain && <span>Captain</span>}</div>)}</div></div>}
-        {historyDetailTab === "stats" && <div className="history-detail-body"><div className="sr"><span>{entry.score1}</span><span>Goals</span><span>{entry.score2}</span></div><table><thead><tr><th>Player</th><th>Team</th><th>G</th><th>A</th><th>YC</th></tr></thead><tbody>{allPlayers.map((item) => <tr key={`${item.team}-${item.id}`}><td>{item.name}{item.captain && <span className="cp"> (C)</span>}</td><td>{item.team}</td><td>{goalCount(item.id)}</td><td>{assistCount(item.id)}</td><td>{yellowCount(item.id)}</td></tr>)}</tbody></table>{entry.motm && <p className="history-motm">Player of the match: <strong>{historyPlayer(entry, entry.motm)?.name || "Player"}</strong></p>}</div>}
+        {historyDetailTab === "stats" && <div className="history-detail-body"><div className="sr"><span>{entry.score1}</span><span>Goals</span><span>{entry.score2}</span></div><div className="history-team-stats">{historyStatsPanel(entry.team1)}{historyStatsPanel(entry.team2)}</div>{entry.motm && <p className="history-motm">Player of the match: <strong>{historyPlayer(entry, entry.motm)?.name || "Player"}</strong></p>}</div>}
       </div>;
     };
     return <div className="sec match-history"><h2>Match history</h2>{state.history.length ? state.history.map((entry) => { const open = openHistoryId === entry.id; return <article className={`history-card${open ? " is-open" : ""}`} key={entry.id}>
-      <button className="history-summary" aria-expanded={open} onClick={() => { setOpenHistoryId(open ? "" : entry.id); setHistoryDetailTab("timeline"); }}><span className="history-date">{new Date(entry.endedAt).toLocaleDateString()}</span><span className="history-score"><span>{entry.team1.name}</span><strong>{entry.score1} – {entry.score2}</strong><span>{entry.team2.name}</span></span><span className="history-result">Full-time <b>{open ? "⌃" : "⌄"}</b></span></button>
+      <button className="history-summary" aria-expanded={open} onClick={() => { setOpenHistoryId(open ? "" : entry.id); setHistoryDetailTab("timeline"); }}><span className="history-date">{new Date(entry.endedAt).toLocaleDateString()}</span><span className="history-score"><span className="history-team-label"><TeamMark name={entry.team1.name} flag={entry.team1.flag} className="history-mini-flag" />{entry.team1.name}</span><strong>{entry.score1} – {entry.score2}</strong><span className="history-team-label"><TeamMark name={entry.team2.name} flag={entry.team2.flag} className="history-mini-flag" />{entry.team2.name}</span></span><span className="history-result">Full-time <b>{open ? "⌃" : "⌄"}</b></span></button>
       {open && detail(entry)}
       {unlocked && <button className="b line sm history-delete" onClick={() => removeHistory(entry.id)}>Delete match</button>}
     </article>; }) : <div className="empty">Ended matches will be saved here.</div>}</div>;
@@ -1827,8 +1867,8 @@ export default function SquadSheet() {
       scheduledFor: state.match.scheduledFor,
       startedAt: new Date(state.match.startedAt).toISOString(),
       durationSeconds: elapsedMatchSeconds(state.match),
-      team1: { name: state.match.us, captain: state.team.captain, substitutes: state.balancedTeams?.team1.substitutes || [], players: firstPlayers },
-      team2: { name: state.match.opp, captain: second?.captain || "", substitutes: second?.substitutes || [], players: secondPlayers },
+      team1: { name: state.match.us, flag: state.balancedTeams?.team1.flag, captain: state.team.captain, substitutes: state.balancedTeams?.team1.substitutes || [], players: firstPlayers },
+      team2: { name: state.match.opp, flag: second?.flag, captain: second?.captain || "", substitutes: second?.substitutes || [], players: secondPlayers },
       score1: state.match.ev.filter((goal) => goal.team !== 2).length,
       score2: state.match.them + state.match.ev.filter((goal) => goal.team === 2).length,
       goals: state.match.ev,
