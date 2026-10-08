@@ -25,6 +25,15 @@ function isAdminEmail(value: string | undefined) {
   return Boolean(value && value.toLowerCase() === ADMIN_EMAIL);
 }
 
+function isAuthConnectionError(error: { name?: string; message?: string; status?: number } | null) {
+  return Boolean(error && (
+    error.name === "AuthRetryableFetchError"
+    || error.status === 0
+    || (typeof error.status === "number" && error.status >= 500)
+    || /fetch failed|network|timed out/i.test(error.message || "")
+  ));
+}
+
 async function setSessionCookies(session: Session) {
   const store = await cookies();
   const options = {
@@ -54,6 +63,9 @@ export async function loginAdmin(password: unknown) {
   if (typeof password !== "string") return { ok: false as const, error: "Incorrect password.", status: 401 };
   const client = authClient();
   const { data, error } = await client.auth.signInWithPassword({ email: ADMIN_EMAIL, password });
+  if (isAuthConnectionError(error)) {
+    return { ok: false as const, error: "Could not reach Supabase Auth. Try again.", status: 503 };
+  }
   if (error || !data.session || !isAdminEmail(data.user?.email)) {
     return { ok: false as const, error: "Incorrect password.", status: 401 };
   }
@@ -74,6 +86,9 @@ export async function changeAdminPassword(currentPassword: unknown, newPassword:
 
   const client = authClient();
   const login = await client.auth.signInWithPassword({ email: ADMIN_EMAIL, password: currentPassword });
+  if (isAuthConnectionError(login.error)) {
+    return { ok: false as const, error: "Could not reach Supabase Auth. Try again.", status: 503 };
+  }
   if (login.error || !login.data.session || !isAdminEmail(login.data.user?.email)) {
     return { ok: false as const, error: "The current password is incorrect.", status: 401 };
   }
