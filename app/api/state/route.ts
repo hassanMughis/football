@@ -254,9 +254,7 @@ async function readDatabaseState() {
   const captain2 = rows.find((row) => row.team === 2 && row.is_captain)?.client_id || String(baseTeam2.captain || secondIds[0] || "");
   const positions1 = Object.fromEntries(rows.filter((row) => row.team === 1).map((row) => [row.client_id, lineupPositions.get(row.client_id) || (typeof basePositions1[row.client_id] === "string" ? String(basePositions1[row.client_id]) : "")]).filter((entry) => entry[1]));
   const positions2 = Object.fromEntries(rows.filter((row) => row.team === 2).map((row) => [row.client_id, lineupPositions.get(row.client_id) || (typeof basePositions2[row.client_id] === "string" ? String(basePositions2[row.client_id]) : "")]).filter((entry) => entry[1]));
-  const cricket = restoreCricketState(base.cricket);
-  if (cricketPlayerRows) {
-    cricket.players = cricketPlayerRows.map((row) => ({
+  const restoredCricketPlayers = cricketPlayerRows?.map((row) => ({
       id: row.client_id,
       name: row.name,
       rating: Number(row.rating) || 0,
@@ -277,7 +275,8 @@ async function readDatabaseState() {
       },
       active: row.active,
     }));
-  }
+  const baseCricket = isJsonObject(base.cricket) ? base.cricket : {};
+  const cricket = restoreCricketState(restoredCricketPlayers ? { ...baseCricket, players: restoredCricketPlayers } : baseCricket);
   return {
     ...base,
     cricket,

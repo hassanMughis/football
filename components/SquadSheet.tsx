@@ -2021,7 +2021,7 @@ export default function SquadSheet() {
       <span className="sync-message" role="status" aria-live="polite"><i className="sync-dot" />{syncText}</span>
       <button className="admin-session-button" type="button" onClick={() => unlocked ? void lock() : setShowAdminLogin(true)}>{unlocked ? "Exit admin" : "Admin login"}</button>
     </div>
-    <main>{cricketMode ? <CricketWorkspace value={state.cricket} unlocked={unlocked} uploadPlayerImage={preparePlayerImage} onChange={(updater) => setState((current) => ({ ...current, cricket: updater(current.cricket) }))} /> : state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : MatchView()}</main>
+    <main>{cricketMode ? <CricketWorkspace value={state.cricket} unlocked={unlocked} uploadPlayerImage={preparePlayerImage} uploadTeamFlag={uploadTeamFlag} onChange={(updater) => setState((current) => ({ ...current, cricket: updater(current.cricket) }))} /> : state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : MatchView()}</main>
     {showAdminLogin && !unlocked && <div className="admin-login-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAdminLogin(false); }}><form className="access-card admin-login-card" onSubmit={unlock} role="dialog" aria-modal="true" aria-labelledby="admin-login-title">
       <button className="admin-login-close" type="button" onClick={() => setShowAdminLogin(false)} aria-label="Close admin login">×</button>
       <img src="/badges/squad-sheet-fc.png" alt="" />

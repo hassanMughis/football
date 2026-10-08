@@ -21,7 +21,7 @@ export type CricketPlayer = {
   active: boolean;
 };
 
-export type CricketTeam = { name: string; ids: string[]; captain: string };
+export type CricketTeam = { name: string; ids: string[]; captain: string; flag?: string; substitutes?: string[] };
 export type CricketTeams = { team1: CricketTeam; team2: CricketTeam; seed: number; cost: number };
 export type CricketDeliveryKind = "dot" | "run" | "four" | "six" | "wicket" | "wide" | "no-ball";
 export type CricketDelivery = {
@@ -59,11 +59,24 @@ export type CricketMatch = {
   completedAt?: string;
   result?: string;
 };
+export type CricketHistoryPlayer = Pick<CricketPlayer, "id" | "name" | "role" | "batting" | "bowling" | "image" | "flag">;
+export type CricketHistoryTeam = { name: string; flag?: string; captain: string; substitutes: string[]; players: CricketHistoryPlayer[] };
+export type CricketHistoryEntry = {
+  id: string;
+  endedAt: string;
+  scheduledFor?: string;
+  overs: number;
+  result: string;
+  team1: CricketHistoryTeam;
+  team2: CricketHistoryTeam;
+  innings: CricketInnings[];
+};
 export type CricketState = {
   tab: CricketTab;
   players: CricketPlayer[];
   teams: CricketTeams | null;
   match: CricketMatch;
+  history: CricketHistoryEntry[];
 };
 
 export const emptyCricketMatch = (): CricketMatch => ({
@@ -82,6 +95,7 @@ export const initialCricketState = (): CricketState => ({
   players: [],
   teams: null,
   match: emptyCricketMatch(),
+  history: [],
 });
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -132,7 +146,8 @@ const normalizeTeam = (value: unknown, validIds: Set<string>, fallbackName: stri
   const ids = value.ids.map(String).filter((id, index, all) => validIds.has(id) && all.indexOf(id) === index);
   if (!ids.length) return null;
   const requestedCaptain = String(value.captain || "");
-  return { name: String(value.name || fallbackName).trim().slice(0, 40) || fallbackName, ids, captain: ids.includes(requestedCaptain) ? requestedCaptain : ids[0] };
+  const substitutes = Array.isArray(value.substitutes) ? value.substitutes.map(String).filter((id, index, all) => ids.includes(id) && all.indexOf(id) === index) : [];
+  return { name: String(value.name || fallbackName).trim().slice(0, 40) || fallbackName, ids, captain: ids.includes(requestedCaptain) ? requestedCaptain : ids[0], flag: typeof value.flag === "string" && value.flag ? value.flag : undefined, substitutes };
 };
 
 const normalizeDelivery = (value: unknown): CricketDelivery | null => {
@@ -161,6 +176,49 @@ const normalizeInnings = (value: unknown): CricketInnings | null => {
     wickets: Math.max(0, Math.floor(Number(value.wickets) || 0)),
     balls: Math.max(0, Math.floor(Number(value.balls) || 0)),
     deliveries: Array.isArray(value.deliveries) ? value.deliveries.map(normalizeDelivery).filter((item): item is CricketDelivery => Boolean(item)).slice(-600) : [],
+  };
+};
+
+const normalizeHistoryPlayer = (value: unknown): CricketHistoryPlayer | null => {
+  if (!isRecord(value)) return null;
+  const name = String(value.name || "").trim();
+  if (!name) return null;
+  return {
+    id: String(value.id || ""),
+    name: name.slice(0, 60),
+    role: CRICKET_ROLES.includes(value.role as CricketRole) ? value.role as CricketRole : "All-rounder",
+    batting: value.batting === "Left hand" ? "Left hand" : "Right hand",
+    bowling: String(value.bowling || "Does not bowl").slice(0, 50),
+    image: typeof value.image === "string" && value.image ? value.image : undefined,
+    flag: typeof value.flag === "string" && value.flag ? value.flag : undefined,
+  };
+};
+
+const normalizeHistoryTeam = (value: unknown, fallbackName: string): CricketHistoryTeam | null => {
+  if (!isRecord(value) || !Array.isArray(value.players)) return null;
+  const players = value.players.map(normalizeHistoryPlayer).filter((item): item is CricketHistoryPlayer => Boolean(item));
+  if (!players.length) return null;
+  const ids = new Set(players.map((item) => item.id));
+  const captain = ids.has(String(value.captain || "")) ? String(value.captain) : players[0].id;
+  const substitutes = Array.isArray(value.substitutes) ? value.substitutes.map(String).filter((id, index, all) => ids.has(id) && all.indexOf(id) === index) : [];
+  return { name: String(value.name || fallbackName).trim().slice(0, 40) || fallbackName, flag: typeof value.flag === "string" && value.flag ? value.flag : undefined, captain, substitutes, players };
+};
+
+const normalizeHistory = (value: unknown, index: number): CricketHistoryEntry | null => {
+  if (!isRecord(value)) return null;
+  const team1 = normalizeHistoryTeam(value.team1, "Team 1");
+  const team2 = normalizeHistoryTeam(value.team2, "Team 2");
+  if (!team1 || !team2) return null;
+  const innings = Array.isArray(value.innings) ? value.innings.map(normalizeInnings).filter((item): item is CricketInnings => Boolean(item)).slice(0, 2) : [];
+  return {
+    id: String(value.id || `cricket-history-${index}`),
+    endedAt: typeof value.endedAt === "string" && Number.isFinite(Date.parse(value.endedAt)) ? value.endedAt : new Date(0).toISOString(),
+    scheduledFor: typeof value.scheduledFor === "string" && Number.isFinite(Date.parse(value.scheduledFor)) ? value.scheduledFor : undefined,
+    overs: Math.max(1, Math.min(50, Math.floor(Number(value.overs) || 5))),
+    result: String(value.result || "Match complete").slice(0, 160),
+    team1,
+    team2,
+    innings,
   };
 };
 
@@ -194,6 +252,7 @@ export function restoreCricketState(value: unknown): CricketState {
       completedAt: typeof rawMatch.completedAt === "string" ? rawMatch.completedAt : undefined,
       result: typeof rawMatch.result === "string" ? rawMatch.result.slice(0, 160) : undefined,
     },
+    history: Array.isArray(value.history) ? value.history.map(normalizeHistory).filter((item): item is CricketHistoryEntry => Boolean(item)).slice(0, 100) : [],
   };
 }
 
@@ -266,8 +325,8 @@ export function makeBalancedCricketTeams(players: CricketPlayer[], captain1: str
   }
 
   return {
-    team1: { name: "Team 1", ids: bestFirst.map((item) => item.id), captain: captain1 },
-    team2: { name: "Team 2", ids: bestSecond.map((item) => item.id), captain: captain2 },
+    team1: { name: "Team 1", ids: bestFirst.map((item) => item.id), captain: captain1, substitutes: bestFirst.slice(11).map((item) => item.id) },
+    team2: { name: "Team 2", ids: bestSecond.map((item) => item.id), captain: captain2, substitutes: bestSecond.slice(11).map((item) => item.id) },
     seed,
     cost: bestCost,
   };
