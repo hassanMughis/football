@@ -12,6 +12,7 @@ export type CricketPlayer = {
   rating: number;
   customOverall?: number;
   role: CricketRole;
+  battingOrder: number;
   batting: "Right hand" | "Left hand";
   bowling: string;
   image?: string;
@@ -59,7 +60,7 @@ export type CricketMatch = {
   completedAt?: string;
   result?: string;
 };
-export type CricketHistoryPlayer = Pick<CricketPlayer, "id" | "name" | "role" | "batting" | "bowling" | "image" | "flag">;
+export type CricketHistoryPlayer = Pick<CricketPlayer, "id" | "name" | "role" | "battingOrder" | "batting" | "bowling" | "image" | "flag">;
 export type CricketHistoryTeam = { name: string; flag?: string; captain: string; substitutes: string[]; players: CricketHistoryPlayer[] };
 export type CricketHistoryEntry = {
   id: string;
@@ -104,6 +105,11 @@ const safeOverall = (value: unknown) => {
   const number = Number(value);
   return Number.isInteger(number) && number >= 1 && number <= 99 ? number : undefined;
 };
+const defaultBattingOrder = (role: CricketRole) => role === "Batter" ? 2 : role === "Wicketkeeper" ? 5 : role === "All-rounder" ? 6 : 9;
+const safeBattingOrder = (value: unknown, role: CricketRole) => {
+  const number = Math.floor(Number(value));
+  return Number.isInteger(number) && number >= 1 && number <= 11 ? number : defaultBattingOrder(role);
+};
 
 const normalizePlayer = (value: unknown, index: number): CricketPlayer | null => {
   if (!isRecord(value)) return null;
@@ -131,6 +137,7 @@ const normalizePlayer = (value: unknown, index: number): CricketPlayer | null =>
     rating: safeOverall(value.customOverall) ? 0 : safeRating(value.rating),
     customOverall: safeOverall(value.customOverall),
     role,
+    battingOrder: safeBattingOrder(value.battingOrder, role),
     batting: value.batting === "Left hand" ? "Left hand" : "Right hand",
     bowling: String(value.bowling || (role === "Batter" || role === "Wicketkeeper" ? "Does not bowl" : "Right-arm medium")).slice(0, 50),
     image: typeof value.image === "string" && value.image ? value.image : undefined,
@@ -187,6 +194,7 @@ const normalizeHistoryPlayer = (value: unknown): CricketHistoryPlayer | null => 
     id: String(value.id || ""),
     name: name.slice(0, 60),
     role: CRICKET_ROLES.includes(value.role as CricketRole) ? value.role as CricketRole : "All-rounder",
+    battingOrder: safeBattingOrder(value.battingOrder, CRICKET_ROLES.includes(value.role as CricketRole) ? value.role as CricketRole : "All-rounder"),
     batting: value.batting === "Left hand" ? "Left hand" : "Right hand",
     bowling: String(value.bowling || "Does not bowl").slice(0, 50),
     image: typeof value.image === "string" && value.image ? value.image : undefined,
@@ -262,14 +270,24 @@ export function cricketOverall(player: CricketPlayer) {
 
 export function cricketStats(player: CricketPlayer): Array<[CricketStatName, number | "–"]> {
   const overall = cricketOverall(player);
-  if (!overall) return CRICKET_STAT_NAMES.map((label) => [label, player.stats?.[label] ?? "–"]);
-  const offsets: Record<CricketRole, number[]> = {
-    Batter: [8, -18, 2, 2, 7, 9],
-    Bowler: [-15, 10, 3, 4, 2, 1],
-    "All-rounder": [4, 5, 4, 3, 4, 4],
-    Wicketkeeper: [5, -12, 11, 6, 2, 7],
+  if (!overall) return CRICKET_STAT_NAMES.map((label) => [label, "–"]);
+  const roleOffsets: Record<CricketRole, Record<CricketStatName, number>> = {
+    Batter: { BAT: 9, BWL: -18, FLD: 2, SPD: 3, PWR: 7, TEC: 9 },
+    Bowler: { BAT: -15, BWL: 11, FLD: 3, SPD: 4, PWR: 3, TEC: 2 },
+    "All-rounder": { BAT: 4, BWL: 5, FLD: 4, SPD: 3, PWR: 4, TEC: 4 },
+    Wicketkeeper: { BAT: 5, BWL: -14, FLD: 12, SPD: 6, PWR: 2, TEC: 7 },
   };
-  return CRICKET_STAT_NAMES.map((label, index) => [label, player.stats?.[label] ?? Math.max(1, Math.min(99, overall + offsets[player.role][index]))]);
+  const order = safeBattingOrder(player.battingOrder, player.role);
+  const orderOffsets: Record<CricketStatName, number> = order <= 2
+    ? { BAT: 4, BWL: -3, FLD: 0, SPD: 2, PWR: 0, TEC: 4 }
+    : order <= 5
+      ? { BAT: 2, BWL: -1, FLD: 0, SPD: 1, PWR: 2, TEC: 2 }
+      : order <= 7
+        ? { BAT: 0, BWL: 1, FLD: 1, SPD: 0, PWR: 2, TEC: 0 }
+        : { BAT: -4, BWL: 3, FLD: 2, SPD: 0, PWR: 1, TEC: -1 };
+  const bowlingText = player.bowling.toLowerCase();
+  const bowlingOffsets: Partial<Record<CricketStatName, number>> = /fast|pace/.test(bowlingText) ? { BWL: 2, SPD: 2, PWR: 2 } : /spin|break|orthodox|leg/.test(bowlingText) ? { BWL: 2, TEC: 3 } : {};
+  return CRICKET_STAT_NAMES.map((label) => [label, Math.max(1, Math.min(99, overall + roleOffsets[player.role][label] + orderOffsets[label] + (bowlingOffsets[label] || 0)))]);
 }
 
 const balanceCost = (first: CricketPlayer[], second: CricketPlayer[]) => {

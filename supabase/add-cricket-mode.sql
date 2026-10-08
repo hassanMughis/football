@@ -54,6 +54,7 @@ create table if not exists public.cricket_players (
   custom_overall integer,
   overall integer,
   role text not null default 'All-rounder',
+  batting_order integer not null default 6,
   batting_hand text not null default 'Right hand',
   bowling_style text not null default 'Right-arm medium',
   image_url text,
@@ -74,6 +75,7 @@ create table if not exists public.cricket_players (
   constraint cricket_players_custom_overall_check check (custom_overall is null or custom_overall between 1 and 99),
   constraint cricket_players_overall_check check (overall is null or overall between 1 and 99),
   constraint cricket_players_role_check check (role in ('Batter', 'Bowler', 'All-rounder', 'Wicketkeeper')),
+  constraint cricket_players_batting_order_check check (batting_order between 1 and 11),
   constraint cricket_players_batting_hand_check check (batting_hand in ('Right hand', 'Left hand')),
   constraint cricket_players_card_style_check check (card_style in ('electric', 'classic', 'eclipse', 'crimson')),
   constraint cricket_players_batting_check check (batting is null or batting between 1 and 99),
@@ -83,6 +85,13 @@ create table if not exists public.cricket_players (
   constraint cricket_players_power_check check (power is null or power between 1 and 99),
   constraint cricket_players_technique_check check (technique is null or technique between 1 and 99)
 );
+
+alter table public.cricket_players
+  add column if not exists batting_order integer not null default 6;
+alter table public.cricket_players
+  drop constraint if exists cricket_players_batting_order_check;
+alter table public.cricket_players
+  add constraint cricket_players_batting_order_check check (batting_order between 1 and 11);
 
 create or replace function public.set_cricket_player_updated_at()
 returns trigger
@@ -135,7 +144,7 @@ begin
     incoming_ids := array_append(incoming_ids, player_id);
 
     insert into public.cricket_players (
-      client_id, name, rating, custom_overall, overall, role, batting_hand,
+      client_id, name, rating, custom_overall, overall, role, batting_order, batting_hand,
       bowling_style, image_url, flag, card_style, active, batting, bowling,
       fielding, speed, power, technique, sort_order
     ) values (
@@ -145,6 +154,7 @@ begin
       nullif(item->>'customOverall', '')::integer,
       nullif(item->>'overall', '')::integer,
       coalesce(nullif(item->>'role', ''), 'All-rounder'),
+      greatest(1, least(11, coalesce((item->>'battingOrder')::integer, 6))),
       coalesce(nullif(item->>'batting', ''), 'Right hand'),
       coalesce(nullif(item->>'bowling', ''), 'Right-arm medium'),
       nullif(item->>'image', ''),
@@ -175,6 +185,7 @@ begin
       custom_overall = excluded.custom_overall,
       overall = excluded.overall,
       role = excluded.role,
+      batting_order = excluded.batting_order,
       batting_hand = excluded.batting_hand,
       bowling_style = excluded.bowling_style,
       image_url = excluded.image_url,
