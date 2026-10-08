@@ -87,7 +87,8 @@ function CricketPlayerCard({ player, children }: { player: CricketPlayer; childr
         {(["BAT", "BWL", "FLD"] as const).map((label) => <div key={label}><span>{label}</span><strong>{stats[label]}</strong></div>)}
       </div>
       {player.image && <div className="cricket-card-portrait"><img src={player.image} alt={`${player.name} portrait`} /></div>}
-      <div className="cricket-card-role"><b>{ROLE_SHORT[player.role]}</b><span>{flag ? <img src={flag} alt={`${player.name} flag`} /> : player.flag || ""}</span></div>
+      <div className="cricket-card-role"><b>{ROLE_SHORT[player.role]}</b></div>
+      <div className="cricket-card-flag">{flag ? <img src={flag} alt={`${player.name} flag`} /> : player.flag || ""}</div>
       <div className="cricket-card-name"><h3 className={player.name.length > 15 ? "is-long" : player.name.length > 10 ? "is-medium" : ""}>{player.name}</h3><span>{player.batting === "Right hand" ? "RH" : "LH"} BAT · {player.bowling === "Does not bowl" ? "DNB" : player.bowling}</span></div>
       <div className="cricket-card-bottom-stats">
         {(["PWR", "SPD", "TEC"] as const).map((label) => <div key={label}><span>{label}</span><strong>{stats[label]}</strong></div>)}
