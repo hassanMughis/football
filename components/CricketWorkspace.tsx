@@ -24,7 +24,6 @@ const CARD_DESIGNS: Record<CricketCardStyle, { name: string; tier: string; image
   crimson: { name: "Elite Red", tier: "ELITE", image: "/card-templates/cricket-red.png", placeholder: "/card-templates/cricket-red-placeholder.png" },
 };
 
-const ROLE_SHORT: Record<CricketPlayer["role"], string> = { Batter: "BAT", Bowler: "BWL", "All-rounder": "AR", Wicketkeeper: "WK" };
 const emptyStatDraft = () => Object.fromEntries(CRICKET_STAT_NAMES.map((label) => [label, ""])) as Record<typeof CRICKET_STAT_NAMES[number], string>;
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((word) => word[0] || "").join("").toUpperCase() || "?";
 const flagCode = (value?: string) => /^[a-z]{2}$/i.test(value || "") ? value!.toLowerCase() : "";
@@ -87,7 +86,6 @@ function CricketPlayerCard({ player, children }: { player: CricketPlayer; childr
         {(["BAT", "BWL", "FLD"] as const).map((label) => <div key={label}><span>{label}</span><strong>{stats[label]}</strong></div>)}
       </div>
       {player.image && <div className="cricket-card-portrait"><img src={player.image} alt={`${player.name} portrait`} /></div>}
-      <div className="cricket-card-role"><b>{ROLE_SHORT[player.role]}</b></div>
       <div className="cricket-card-flag">{flag ? <img src={flag} alt={`${player.name} flag`} /> : player.flag || ""}</div>
       <div className="cricket-card-name"><h3 className={player.name.length > 15 ? "is-long" : player.name.length > 10 ? "is-medium" : ""}>{player.name}</h3><span>{player.batting === "Right hand" ? "RH" : "LH"} BAT · {player.bowling === "Does not bowl" ? "DNB" : player.bowling}</span></div>
       <div className="cricket-card-bottom-stats">
