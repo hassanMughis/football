@@ -81,6 +81,7 @@ type Props = {
 };
 
 type CricketMatchTab = "timeline" | "lineups" | "stats" | "history" | "edit";
+type CricketTeamAction = "captain" | "bench" | "move";
 
 function CricketRatingPicker({ value, onChange }: { value: number; onChange: (value: number) => void }) {
   const [hoverRating, setHoverRating] = useState<number | null>(null);
@@ -127,6 +128,8 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
   const [editingId, setEditingId] = useState("");
   const [uploading, setUploading] = useState(false);
   const [teamFlagUploading, setTeamFlagUploading] = useState<"" | "team1" | "team2">("");
+  const [openTeamMenu, setOpenTeamMenu] = useState<"" | "team1" | "team2">("");
+  const [teamAction, setTeamAction] = useState<{ team: "team1" | "team2"; action: CricketTeamAction } | null>(null);
   const [scheduleInput, setScheduleInput] = useState("");
   const [matchTab, setMatchTab] = useState<CricketMatchTab>("timeline");
   const [openHistoryId, setOpenHistoryId] = useState("");
@@ -387,6 +390,16 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
     const assigned = new Set(saved ? [...saved.team1.ids, ...saved.team2.ids] : []);
     const unassigned = activePlayers.filter((item) => !assigned.has(item.id)).sort((a, b) => cricketOverall(b) - cricketOverall(a));
     const draftTeam: "team1" | "team2" = saved && Math.max(0, saved.team1.ids.length + saved.team2.ids.length - 2) % 2 === 1 ? "team2" : "team1";
+    const averageTeamOverall = (ids: string[]) => {
+      const roster = ids.map((id) => player(id)).filter((item): item is CricketPlayer => Boolean(item));
+      return roster.length ? Math.round(roster.reduce((sum, item) => sum + cricketOverall(item), 0) / roster.length * 10) / 10 : null;
+    };
+    const team1Average = saved ? averageTeamOverall(saved.team1.ids) : null;
+    const team2Average = saved ? averageTeamOverall(saved.team2.ids) : null;
+    const averageGap = team1Average !== null && team2Average !== null ? Math.round(Math.abs(team1Average - team2Average) * 10) / 10 : null;
+    const balanceReady = unassigned.length === 0 && averageGap !== null && team1Average !== null && team2Average !== null;
+    const teamsUnbalanced = balanceReady && averageGap >= 2;
+    const strongerTeamName = saved && team1Average !== null && team2Average !== null ? team1Average >= team2Average ? saved.team1.name : saved.team2.name : "";
     const captainsReady = () => {
       if (!firstCaptain || !secondCaptain) { window.alert("Choose both captains first."); return false; }
       if (firstCaptain === secondCaptain) { window.alert("Choose two different captains."); return false; }
@@ -413,6 +426,22 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
       if (isSubstitute && team.ids.length - substitutes.length >= 11) { window.alert("A cricket lineup can have at most 11 starters."); return; }
       updateTeam(key, { substitutes: isSubstitute ? substitutes.filter((playerId) => playerId !== id) : [...substitutes, id] });
     };
+    const chooseTeamAction = (team: "team1" | "team2", action: CricketTeamAction) => {
+      setOpenTeamMenu("");
+      setTeamAction({ team, action });
+    };
+    const applyTeamAction = (team: "team1" | "team2", id: string) => {
+      if (!saved || !teamAction || teamAction.team !== team) return;
+      const selected = saved[team];
+      const isSubstitute = Boolean(selected.substitutes?.includes(id));
+      if (teamAction.action === "captain" && isSubstitute) { window.alert("Choose a starting player as captain."); return; }
+      if (teamAction.action === "bench" && selected.captain === id && !isSubstitute) { window.alert("Choose another captain before moving this player to the bench."); return; }
+      if (teamAction.action === "move" && selected.captain === id) { window.alert("Choose another captain before moving this player to the other team."); return; }
+      if (teamAction.action === "captain") updateTeam(team, { captain: id });
+      if (teamAction.action === "bench") toggleSubstitute(team, id);
+      if (teamAction.action === "move") assignPlayer(id, team === "team1" ? "team2" : "team1");
+      setTeamAction(null);
+    };
     const changeFlag = async (key: "team1" | "team2", file?: File) => {
       if (!file) return;
       setTeamFlagUploading(key);
@@ -420,17 +449,20 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
     };
     const deleteTeams = () => {
       if (!window.confirm("Delete both generated teams? Players and saved match history will be kept.")) return;
-      update((current) => ({ ...current, teams: null, match: emptyCricketMatch() })); setCaptain1(""); setCaptain2("");
+      update((current) => ({ ...current, teams: null, match: emptyCricketMatch() })); setCaptain1(""); setCaptain2(""); setOpenTeamMenu(""); setTeamAction(null);
     };
     const teamCard = (key: "team1" | "team2") => {
       if (!saved) return null;
       const team = saved[key]; const other = key === "team1" ? "team2" : "team1"; const number = key === "team1" ? 1 : 2;
       const roster = team.ids.map((id) => player(id)).filter((item): item is CricketPlayer => Boolean(item));
-      const substitutes = team.substitutes || []; const average = roster.length ? Math.round(roster.reduce((sum, item) => sum + cricketOverall(item), 0) / roster.length * 10) / 10 : 0;
+      const substitutes = team.substitutes || []; const average = key === "team1" ? team1Average : team2Average;
+      const activeAction = teamAction?.team === key ? teamAction.action : null;
+      const actionPrompt = activeAction === "captain" ? "Choose the new captain" : activeAction === "bench" ? "Choose a player to move to or from the bench" : activeAction === "move" ? `Choose a player to move to ${saved[other].name}` : "";
       const flag = flagSource(team.flag);
-      return <article className="card balanced-team-card">{unlocked ? <div className="team-identity-fields"><div><label>Team {number} name</label><input value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><label>Team flag</label><div className="team-flag-field"><span className="team-flag-preview">{flag ? <img src={flag} alt={`${team.name} flag`} /> : initials(team.name)}</span><div className="team-flag-actions"><label className="b line sm photo-button">{teamFlagUploading === key ? "Uploading…" : team.flag ? "Replace PNG" : "Upload PNG"}<input type="file" accept="image/png,.png" disabled={Boolean(teamFlagUploading)} onChange={(event) => { const file = event.target.files?.[0]; void changeFlag(key, file); event.target.value = ""; }} /></label>{team.flag && <button className="b line sm" onClick={() => updateTeam(key, { flag: undefined })}>Remove</button>}</div></div></div></div> : <h3 className="public-team-name"><span className="team-name-flag">{flag ? <img src={flag} alt="" /> : initials(team.name)}</span>{team.name}</h3>}
+      return <article className="card balanced-team-card">{unlocked ? <div className="team-identity-fields"><div><label>Team {number} name</label><input value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><div className="team-flag-heading"><label>Team flag</label><div className="team-action-menu"><button type="button" className="b line sm team-menu-trigger" aria-label={`Open ${team.name || `Team ${number}`} actions`} aria-expanded={openTeamMenu === key} onClick={() => setOpenTeamMenu((current) => current === key ? "" : key)}>⋯</button>{openTeamMenu === key && <div className="team-action-menu__list"><button type="button" onClick={() => chooseTeamAction(key, "captain")}>Change captain</button><button type="button" disabled={value.match.status !== "setup"} onClick={() => chooseTeamAction(key, "bench")}>Starter / bench</button><button type="button" disabled={value.match.status !== "setup" || unassigned.length > 0} onClick={() => chooseTeamAction(key, "move")}>Move to {saved[other].name}</button></div>}</div></div><div className="team-flag-field"><span className="team-flag-preview">{flag ? <img src={flag} alt={`${team.name} flag`} /> : initials(team.name)}</span><div className="team-flag-actions"><label className="b line sm photo-button">{teamFlagUploading === key ? "Uploading…" : team.flag ? "Replace PNG" : "Upload PNG"}<input type="file" accept="image/png,.png" disabled={Boolean(teamFlagUploading)} onChange={(event) => { const file = event.target.files?.[0]; void changeFlag(key, file); event.target.value = ""; }} /></label>{team.flag && <button className="b line sm" onClick={() => updateTeam(key, { flag: undefined })}>Remove</button>}</div></div></div></div> : <h3 className="public-team-name"><span className="team-name-flag">{flag ? <img src={flag} alt="" /> : initials(team.name)}</span>{team.name}</h3>}
+        {activeAction && <div className="team-action-prompt"><span>{actionPrompt}, then click their name.</span><button type="button" onClick={() => setTeamAction(null)}>Cancel</button></div>}
         <p className="note">{roster.length} players · Avg {average} OVR</p><p className="formation-label">Playing XI: {team.ids.length - substitutes.length}{substitutes.length ? ` · ${substitutes.length} substitute${substitutes.length === 1 ? "" : "s"}` : ""}</p>
-        <div className="roster-list">{roster.map((item) => { const isSub = substitutes.includes(item.id); return <div className="roster-entry" key={item.id}><div className="roster-row"><span className="roster-player-button"><span className="roster-avatar">{item.image ? <img src={item.image} alt="" /> : initials(item.name)}</span><span className="roster-copy"><strong>{item.name}{team.captain === item.id && <span className="cp"> (C)</span>}</strong><small>{item.role} · {cricketOverall(item) || "–"} OVR · {item.batting}</small></span></span>{unlocked && <div className="roster-actions"><span className={`lineup-role${isSub ? " is-sub" : ""}`}>{isSub ? "SUB" : "XI"}</span><select aria-label={`${item.name} captain status`} value={team.captain === item.id ? item.id : ""} onChange={() => updateTeam(key, { captain: item.id })}><option value="">Player</option><option value={item.id}>Captain</option></select>{value.match.status === "setup" && <button className="b line sm" onClick={() => toggleSubstitute(key, item.id)}>{isSub ? "Make starter" : "Move to bench"}</button>}{value.match.status === "setup" && team.captain !== item.id && <button className="b line sm" onClick={() => assignPlayer(item.id, other)}>Move</button>}</div>}</div></div>; })}</div>
+        <div className="roster-list">{roster.map((item) => { const isSub = substitutes.includes(item.id); return <div className={`roster-entry${activeAction ? " is-selecting" : ""}`} key={item.id}><div className="roster-row"><button type="button" className="roster-player-button" disabled={!activeAction} onClick={() => applyTeamAction(key, item.id)}><span className="roster-avatar">{item.image ? <img src={item.image} alt="" /> : initials(item.name)}</span><span className="roster-copy"><strong>{item.name}{team.captain === item.id && <span className="cp"> (C)</span>}</strong><small>{item.role} · {cricketOverall(item) || "–"} OVR · {item.batting}</small></span></button>{unlocked && <div className="roster-actions"><span className={`lineup-role${isSub ? " is-sub" : ""}`}>{isSub ? "SUB" : "XI"}</span></div>}</div></div>; })}</div>
       </article>;
     };
     return <>
@@ -438,6 +470,7 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
         {!saved ? <div className="button-row"><button className="b pri" disabled={activePlayers.length < 2} onClick={() => generateTeams(false)}>Auto-pick balanced teams</button><button className="b line" disabled={activePlayers.length < 2} onClick={startManualPick}>Pick manually</button></div> : <div className="button-row"><button className="b" onClick={() => generateTeams(true)}>Shuffle again</button><button className="b line" onClick={deleteTeams}>Delete generated teams</button></div>}{formError && <p className="access-error">{formError}</p>}
       </section> : !saved && <section className="sec"><h2>No teams yet</h2><p className="empty">An admin can log in and create the next two teams.</p></section>}
       {saved && <section className="sec top-rule"><h2>{unlocked ? "Edit teams and playing XI" : "Teams"}</h2><p className="note">{unlocked ? "Move players between sides, choose captains, upload team flags, and set the playing XI or bench before hosting." : "View the current cricket squads and playing XIs."}</p>
+        {balanceReady && <div className={`team-balance-status${teamsUnbalanced ? " is-warning" : " is-balanced"}`} role={teamsUnbalanced ? "alert" : "status"}><strong>{teamsUnbalanced ? "Teams are not balanced" : "Teams are balanced"}</strong><span>{saved.team1.name || "Team 1"}: {team1Average?.toFixed(1)} OVR · {saved.team2.name || "Team 2"}: {team2Average?.toFixed(1)} OVR · Difference: {averageGap?.toFixed(1)} OVR.</span>{teamsUnbalanced && <span>{strongerTeamName} is stronger. Shuffle again or move players between the teams.</span>}<details className="team-balance-info"><summary aria-label="Show team balance rule"><span aria-hidden="true">ⓘ</span> Balance rule</summary><p>Balance is based on each team&apos;s average OVR. Keep the difference below 2.0 for a balanced match.</p></details></div>}
         <div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>
         {unassigned.length > 0 && <div className="unassigned-card"><h2>Players waiting to be picked · {unassigned.length}</h2><p className="note">Captains take turns. Pick one player for the highlighted side.</p><div className="roster-list">{unassigned.map((item) => <div className="roster-entry" key={item.id}><div className="roster-row"><span className="roster-player-button"><span className="roster-avatar">{item.image ? <img src={item.image} alt="" /> : initials(item.name)}</span><span className="roster-copy"><strong>{item.name}</strong><small>{item.role} · {cricketOverall(item) || "–"} OVR</small></span></span>{unlocked && <div className="roster-actions"><button className="b sm pri" onClick={() => pickUnassigned(item.id)}>Pick for {saved[draftTeam].name}</button></div>}</div></div>)}</div></div>}
         {unlocked && value.match.status === "setup" && !unassigned.length && <div className="match-host-card"><h3>Host this cricket match</h3><p className="note">Start now or schedule a kickoff. A scheduled match waits for an admin to start it.</p><div className="row2"><div><label>Overs per innings</label><select value={value.match.overs} onChange={(event) => update((current) => ({ ...current, match: { ...current.match, overs: Number(event.target.value) } }))}>{[1, 2, 5, 10, 20, 50].map((overs) => <option key={overs} value={overs}>{overs} overs</option>)}</select></div><div><label>Batting first</label><select value={value.match.battingFirst} onChange={(event) => update((current) => ({ ...current, match: { ...current.match, battingFirst: Number(event.target.value) === 2 ? 2 : 1 } }))}><option value={1}>{saved.team1.name}</option><option value={2}>{saved.team2.name}</option></select></div></div><div className="button-row"><button className="b pri" disabled={!starterIds(1).length || !starterIds(2).length} onClick={hostMatch}>Host now</button></div><label>Schedule kickoff</label><div className="schedule-row"><input type="datetime-local" value={scheduleInput} onChange={(event) => setScheduleInput(event.target.value)} /><button className="b line" disabled={!scheduleInput} onClick={() => { const kickoff = new Date(scheduleInput); if (!Number.isFinite(kickoff.getTime())) return; scheduleMatch(kickoff.toISOString()); }}>Schedule match</button></div></div>}
@@ -483,7 +516,7 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
     if (value.match.status === "setup") return <><section className="sec"><h2>No active cricket match</h2><p className="empty">Your teams are ready. Host a match from the Team tab when everyone is ready to play.</p><button className="b pri" onClick={() => update((current) => ({ ...current, tab: "team" }))}>Review teams and host match</button></section>{HistoryView()}</>;
     if (value.match.status === "scheduled") {
       const due = Boolean(value.match.scheduledFor && Date.parse(value.match.scheduledFor) <= now);
-      return <><section className="sec"><div className="cricket-score-preview"><div><small>Team 1</small><strong>{value.teams.team1.name}</strong></div><span><b>VS</b><small>{due ? "Kickoff due" : "Scheduled"}</small></span><div><small>Team 2</small><strong>{value.teams.team2.name}</strong></div></div><div className="card cricket-scheduled-card"><p className="cricket-kicker"><span /> Scheduled cricket match</p><h2>{formatKickoff(value.match.scheduledFor)}</h2><p className="note">The innings will not begin automatically. {due ? "Kickoff time has arrived; the match is delayed until the administrator starts it." : "The administrator can start play when kickoff arrives."}</p>{unlocked && <div className="button-row"><button className="b pri" disabled={!due} onClick={hostMatch}>{due ? "Start match" : "Waiting for kickoff"}</button><button className="b line" onClick={() => update((current) => ({ ...current, tab: "team", match: { ...current.match, status: "setup" } }))}>Edit schedule</button><button className="b line danger" onClick={() => { if (window.confirm("Delete this scheduled match?")) update((current) => ({ ...current, match: emptyCricketMatch() })); }}>Delete match</button></div>}</div></section>{HistoryView()}</>;
+      return <><section className="sec"><div className="cricket-score-preview"><div><small>Team 1</small><strong>{value.teams.team1.name}</strong></div><span><b>VS</b><small>{due ? "Kickoff due" : "Scheduled"}</small></span><div><small>Team 2</small><strong>{value.teams.team2.name}</strong></div></div><div className="card cricket-scheduled-card"><p className="cricket-kicker"><span /> Scheduled cricket match</p><h2>{formatKickoff(value.match.scheduledFor)}</h2><p className="note">The innings will not begin automatically. {due ? "Kickoff time has arrived; the match is delayed until the administrator starts it." : "The administrator can start play when kickoff arrives."}</p>{unlocked && <div className="button-row"><button className="b pri" disabled={!due} onClick={hostMatch}>{due ? "Start match" : "Waiting for kickoff"}</button><button className="b line" onClick={() => update((current) => ({ ...current, tab: "team", match: { ...current.match, status: "setup" } }))}>Edit schedule</button><button className="b line danger" onClick={() => { if (window.confirm("Delete this scheduled match? The generated teams will be kept.")) update((current) => ({ ...current, match: emptyCricketMatch() })); }}>Delete scheduled match</button></div>}</div></section>{HistoryView()}</>;
     }
 
     const current = value.match.innings[value.match.inningsNumber - 1] || value.match.innings.at(-1);
