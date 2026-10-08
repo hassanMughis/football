@@ -113,6 +113,7 @@ type MatchHistoryEntry = {
   motm: string;
 };
 type AppState = {
+  syncVersion?: number;
   sportMode: SportMode;
   cricket: CricketState;
   players: Player[];
@@ -402,6 +403,7 @@ const restoreState = (value: unknown): AppState => {
     sub: parsed.sub === "lineups" || parsed.sub === "stats" || parsed.sub === "history" || parsed.sub === "edit" ? parsed.sub : "timeline",
     match: normalizedMatch,
     history: Array.isArray(parsed.history) ? parsed.history.slice(0, 100) : [],
+    syncVersion: Number(parsed.syncVersion) || undefined,
     savedAt: Number(parsed.savedAt) || undefined,
   };
 };
@@ -1019,6 +1021,7 @@ export default function SquadSheet() {
   const hydrated = useRef(false);
   const saveSequence = useRef(0);
   const lastSyncedFingerprint = useRef("");
+  const pendingSave = useRef<{ payload: AppState; fingerprint: string; sequence: number } | null>(null);
   const stateFingerprint = sharedStateFingerprint(state);
 
   useEffect(() => {
@@ -1054,20 +1057,21 @@ export default function SquadSheet() {
       } catch { /* Local state remains available when the network is offline. */ }
 
       let legacyValue: unknown = null;
-      if (!remoteValue && !localValue) {
+      if (!remoteValue && (supabaseAvailable || !localValue)) {
         try {
           const legacyResponse = await fetch("/api/squad", { cache: "no-store" });
           if (legacyResponse.ok) legacyValue = await legacyResponse.json();
         } catch { /* A new installation can still use its seeded local state. */ }
       }
 
-      const remoteTime = remoteValue && typeof remoteValue === "object" ? Number((remoteValue as { savedAt?: number }).savedAt) || 0 : 0;
-      const localTime = localValue && typeof localValue === "object" ? Number((localValue as { savedAt?: number }).savedAt) || 0 : 0;
-      const savedValue = remoteValue && (!unlocked || !localValue || remoteTime >= localTime) ? remoteValue : localValue;
+      const savedValue = supabaseAvailable ? remoteValue : localValue;
       const restored = savedValue ? restoreState(savedValue) : legacySquadState(legacyValue) || initialState();
       if (cancelled) return;
       lastSyncedFingerprint.current = sharedStateFingerprint(restored);
       hydrated.current = true;
+      if (supabaseAvailable) {
+        try { localStorage.setItem("sqs1", JSON.stringify(restored)); } catch { /* Supabase remains authoritative if browser storage is unavailable. */ }
+      }
       setState(restored);
       setSyncStatus(supabaseAvailable ? "saved" : "offline");
       setHydrationReady(true);
@@ -1080,9 +1084,11 @@ export default function SquadSheet() {
     if (!unlocked || !hydrated.current || !hydrationReady || stateFingerprint === lastSyncedFingerprint.current) return;
     const sequence = ++saveSequence.current;
     const payload: AppState = { ...state, savedAt: Date.now() };
+    pendingSave.current = { payload, fingerprint: stateFingerprint, sequence };
     try { localStorage.setItem("sqs1", JSON.stringify(payload)); } catch { /* Storage can be unavailable in private browsing. */ }
     setSyncStatus("saving");
     const timeout = window.setTimeout(async () => {
+      if (sequence !== saveSequence.current) return;
       try {
         const response = await fetch("/api/state", {
           method: "PUT",
@@ -1090,8 +1096,11 @@ export default function SquadSheet() {
           body: JSON.stringify(payload),
         });
         if (!response.ok) throw new Error("Supabase save failed.");
+        const result = await response.json() as { source?: string };
+        if (result.source !== "database") throw new Error("The Realtime database save did not complete.");
         if (sequence === saveSequence.current) {
           lastSyncedFingerprint.current = stateFingerprint;
+          pendingSave.current = null;
           setSyncStatus("saved");
         }
       } catch {
@@ -1100,6 +1109,21 @@ export default function SquadSheet() {
     }, 650);
     return () => window.clearTimeout(timeout);
   }, [hydrationReady, stateFingerprint, unlocked]);
+
+  useEffect(() => {
+    const flushPendingSave = () => {
+      const pending = pendingSave.current;
+      if (!pending) return;
+      void fetch("/api/state", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(pending.payload),
+        keepalive: true,
+      });
+    };
+    window.addEventListener("pagehide", flushPendingSave);
+    return () => window.removeEventListener("pagehide", flushPendingSave);
+  }, []);
 
   useEffect(() => {
     const needsClockTick = Boolean(state.match.timerStartedAt || (!state.match.startedAt && state.match.scheduledFor));
@@ -1119,21 +1143,25 @@ export default function SquadSheet() {
   }, [clockNow, state.match.st, state.match.timerStartedAt]);
 
   useEffect(() => {
-    if (!accessChecked || unlocked || !hydrationReady || !supabaseBrowser) return;
+    if (!accessChecked || !hydrationReady || !supabaseBrowser) return;
     const client = supabaseBrowser;
     let disposed = false;
     let channel: ReturnType<typeof client.channel> | null = null;
     let subscriptionGeneration = 0;
+    let refreshGeneration = 0;
     let restarting = false;
     let browserOffline = !navigator.onLine;
 
     const refreshFromApi = async () => {
+      const refresh = ++refreshGeneration;
       try {
         const response = await fetch("/api/state", { cache: "no-store" });
         if (!response.ok || disposed) return;
         const payload = await response.json() as { state?: unknown };
-        if (!payload.state || disposed) return;
+        if (!payload.state || disposed || refresh !== refreshGeneration) return;
         const refreshed = restoreState(payload.state);
+        ++saveSequence.current;
+        pendingSave.current = null;
         lastSyncedFingerprint.current = sharedStateFingerprint(refreshed);
         try { localStorage.setItem("sqs1", JSON.stringify(refreshed)); } catch { /* Realtime still updates memory if browser storage is unavailable. */ }
         setState((current) => ({ ...refreshed, tab: current.tab, sub: current.sub }));
@@ -1153,19 +1181,12 @@ export default function SquadSheet() {
             void refreshFromApi();
           },
         )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "cricket_players" },
-          () => {
-            if (disposed || generation !== subscriptionGeneration) return;
-            void refreshFromApi();
-          },
-        )
         .subscribe((status) => {
           if (disposed || generation !== subscriptionGeneration) return;
           if (status === "SUBSCRIBED") {
             browserOffline = false;
             setSyncStatus("saved");
+            void refreshFromApi();
           } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
             setSyncStatus(browserOffline ? "offline" : "reconnecting");
           }
@@ -1209,7 +1230,7 @@ export default function SquadSheet() {
       document.removeEventListener("visibilitychange", handleVisibility);
       if (channel) void client.removeChannel(channel);
     };
-  }, [accessChecked, hydrationReady, unlocked]);
+  }, [accessChecked, hydrationReady]);
 
   const active = useMemo(() => state.players.filter((player) => player.on !== false), [state.players]);
   const teamSize = state.want ? Math.min(state.want, active.length) : active.length;

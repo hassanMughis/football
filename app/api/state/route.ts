@@ -276,7 +276,11 @@ async function readDatabaseState() {
       active: row.active,
     }));
   const baseCricket = isJsonObject(base.cricket) ? base.cricket : {};
-  const cricket = restoreCricketState(restoredCricketPlayers ? { ...baseCricket, players: restoredCricketPlayers } : baseCricket);
+  const useCricketPlayerTable = Boolean(cricketPlayerRows) && (
+    baseCricket.playersSource === "table"
+    || (baseCricket.playersSource !== "embedded" && (!Array.isArray(baseCricket.players) || baseCricket.players.length === 0))
+  );
+  const cricket = restoreCricketState(useCricketPlayerTable ? { ...baseCricket, players: restoredCricketPlayers } : baseCricket);
   return {
     ...base,
     cricket,
@@ -306,6 +310,7 @@ export async function GET() {
     let storageState: JsonObject | null = null;
     try { databaseState = await readDatabaseState(); } catch { /* The rich-table migration may not have been run yet. */ }
     try { storageState = await readStorageState(); } catch { /* Database state can remain available if Storage is temporarily unavailable. */ }
+    if (databaseState && numberValue(databaseState.syncVersion) >= 1) return Response.json({ state: databaseState, source: "database" });
     const databaseSavedAt = numberValue(databaseState?.savedAt);
     const storageSavedAt = numberValue(storageState?.savedAt);
     if (storageState && (!databaseState || storageSavedAt > databaseSavedAt)) return Response.json({ state: storageState, source: "storage" });
@@ -318,7 +323,7 @@ export async function GET() {
 export async function PUT(request: Request) {
   if (!await isAdmin()) return Response.json({ error: "Admin login required." }, { status: 401 });
   try {
-    const state = validateAndEnrichState(await request.json());
+    const state = { ...validateAndEnrichState(await request.json()), syncVersion: 1 };
     try {
       const cricketState = restoreCricketState(state.cricket);
       const cricketPlayers = cricketState.players.map((player, sortOrder) => {
@@ -340,11 +345,20 @@ export async function PUT(request: Request) {
           stats,
         };
       });
-      await supabaseRest("rpc/save_cricket_players", {
-        method: "POST",
-        body: JSON.stringify({ p_players: cricketPlayers }),
-      });
-      const databaseState = { ...state, cricket: { ...cricketState, players: [] } };
+      let cricketPlayersSaved = false;
+      try {
+        await supabaseRest("rpc/save_cricket_players", {
+          method: "POST",
+          body: JSON.stringify({ p_players: cricketPlayers }),
+        });
+        cricketPlayersSaved = true;
+      } catch { /* Keep cricket players embedded so the canonical state row can still update in Realtime. */ }
+      const databaseState = {
+        ...state,
+        cricket: cricketPlayersSaved
+          ? { ...cricketState, players: [], playersSource: "table" }
+          : { ...cricketState, playersSource: "embedded" },
+      };
       await supabaseRest("rpc/save_squad_sheet_state", {
         method: "POST",
         body: JSON.stringify({ p_state: databaseState }),
