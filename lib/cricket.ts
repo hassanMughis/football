@@ -256,20 +256,38 @@ export function restoreCricketState(value: unknown): CricketState {
   };
 }
 
+const cricketStatOffsets: Record<CricketRole, Record<CricketStatName, number>> = {
+  Batter: { BAT: 8, BWL: -18, FLD: 2, SPD: 2, PWR: 7, TEC: 9 },
+  Bowler: { BAT: -15, BWL: 10, FLD: 3, SPD: 4, PWR: 2, TEC: 1 },
+  "All-rounder": { BAT: 4, BWL: 5, FLD: 4, SPD: 3, PWR: 4, TEC: 4 },
+  Wicketkeeper: { BAT: 5, BWL: -12, FLD: 11, SPD: 6, PWR: 2, TEC: 7 },
+};
+
+const cricketOverallWeights: Record<CricketRole, Record<CricketStatName, number>> = {
+  Batter: { BAT: .32, BWL: .06, FLD: .10, SPD: .12, PWR: .18, TEC: .22 },
+  Bowler: { BAT: .08, BWL: .34, FLD: .11, SPD: .13, PWR: .16, TEC: .18 },
+  "All-rounder": { BAT: .20, BWL: .20, FLD: .14, SPD: .13, PWR: .16, TEC: .17 },
+  Wicketkeeper: { BAT: .20, BWL: .04, FLD: .32, SPD: .13, PWR: .10, TEC: .21 },
+};
+
+const ratingOverall = (player: CricketPlayer) => player.rating ? Math.max(45, Math.min(99, Math.round(44 + player.rating * 5))) : 0;
+const generatedCricketStat = (player: CricketPlayer, label: CricketStatName, base: number) => Math.max(1, Math.min(99, base + cricketStatOffsets[player.role][label]));
+
 export function cricketOverall(player: CricketPlayer) {
-  return player.customOverall ?? (player.rating ? Math.max(45, Math.min(99, Math.round(44 + player.rating * 5))) : 0);
+  if (player.customOverall) return player.customOverall;
+  const base = ratingOverall(player);
+  const hasAttributes = CRICKET_STAT_NAMES.some((label) => typeof player.stats?.[label] === "number");
+  if (!hasAttributes) return base;
+  const attributeBase = base || 50;
+  const weights = cricketOverallWeights[player.role];
+  const weightedOverall = CRICKET_STAT_NAMES.reduce((total, label) => total + (player.stats?.[label] ?? generatedCricketStat(player, label, attributeBase)) * weights[label], 0);
+  return Math.max(1, Math.min(99, Math.round(weightedOverall)));
 }
 
 export function cricketStats(player: CricketPlayer): Array<[CricketStatName, number | "–"]> {
   const overall = cricketOverall(player);
   if (!overall) return CRICKET_STAT_NAMES.map((label) => [label, player.stats?.[label] ?? "–"]);
-  const offsets: Record<CricketRole, number[]> = {
-    Batter: [8, -18, 2, 2, 7, 9],
-    Bowler: [-15, 10, 3, 4, 2, 1],
-    "All-rounder": [4, 5, 4, 3, 4, 4],
-    Wicketkeeper: [5, -12, 11, 6, 2, 7],
-  };
-  return CRICKET_STAT_NAMES.map((label, index) => [label, player.stats?.[label] ?? Math.max(1, Math.min(99, overall + offsets[player.role][index]))]);
+  return CRICKET_STAT_NAMES.map((label) => [label, player.stats?.[label] ?? generatedCricketStat(player, label, overall)]);
 }
 
 const balanceCost = (first: CricketPlayer[], second: CricketPlayer[]) => {
