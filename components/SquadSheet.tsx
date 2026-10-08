@@ -1564,6 +1564,17 @@ export default function SquadSheet() {
     const draftTeam: "team1" | "team2" = saved && Math.max(0, saved.team1.ids.length + saved.team2.ids.length - 2) % 2 === 1 ? "team2" : "team1";
     const draftCaptain = saved ? player(saved[draftTeam].captain) : undefined;
     const previousSignature = saved ? [[...saved.team1.ids].sort().join("|"), [...saved.team2.ids].sort().join("|")].sort().join("::") : "";
+    const averageTeamOverall = (ids: string[]) => {
+      const ratings = ids.map(player).filter((item): item is Player => Boolean(item)).map(displayedOverall).filter((value): value is number => value !== null);
+      return ratings.length ? Math.round(ratings.reduce((sum, value) => sum + value, 0) / ratings.length * 10) / 10 : null;
+    };
+    const team1Average = saved ? averageTeamOverall(saved.team1.ids) : null;
+    const team2Average = saved ? averageTeamOverall(saved.team2.ids) : null;
+    const averageGap = team1Average !== null && team2Average !== null ? Math.round(Math.abs(team1Average - team2Average) * 10) / 10 : null;
+    const teamsUnbalanced = unassigned.length === 0 && averageGap !== null && averageGap >= 3;
+    const strongerTeamName = saved && team1Average !== null && team2Average !== null
+      ? team1Average >= team2Average ? saved.team1.name || "Team 1" : saved.team2.name || "Team 2"
+      : "";
 
     const captainsReady = () => {
       if (!captain1 || !captain2) { window.alert("Choose both captains first."); return false; }
@@ -1731,7 +1742,9 @@ export default function SquadSheet() {
       </div> : !saved && <div className="sec"><h2>No teams yet</h2><p className="empty">An admin can log in and create the next two teams.</p></div>}
       {saved && <div className="sec top-rule"><h2>{unlocked ? "Edit teams and positions" : "Teams"}</h2><p className="note">{unlocked ? "After OVR-balanced teams are chosen, positions maximize lineup OVR while covering goalkeeper, defence and attack. Captains stay on their selected side." : "View the current squads, formations and player cards."}</p>
         {unassigned.length > 0 && <div className="draft-arena" aria-live="polite"><div className={`draft-captain draft-captain-left${draftTeam === "team1" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team1.captain)?.name || saved.team1.name}</strong><small>{draftTeam === "team1" ? "Picking now" : "Waiting"}</small></div><div className="draft-ball">⚽</div><div className={`draft-captain draft-captain-right${draftTeam === "team2" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team2.captain)?.name || saved.team2.name}</strong><small>{draftTeam === "team2" ? "Picking now" : "Waiting"}</small></div><p><strong>{draftCaptain?.name || saved[draftTeam].name}&apos;s turn</strong> · choose one player</p></div>}
-        <div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>{FormationBoard(true)}
+        <div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>
+        {teamsUnbalanced && <div className="team-balance-warning" role="alert"><strong>Teams are not balanced</strong><span>{strongerTeamName} is {averageGap} average OVR stronger. Shuffle again or move players between the teams.</span></div>}
+        {FormationBoard(true)}
         {unassigned.length > 0 && <div className="unassigned-card"><h2>Players waiting to be picked · {unassigned.length}</h2><p className="note">Captains take turns. Only the captain whose hand is highlighted can make the next pick.</p><div className="roster-list">{unassigned.map((item) => RosterRow({ item, rowKey: item.id, children: unlocked ? <button className="b sm pri" onClick={() => assignPlayer(item.id, draftTeam)}>Pick for {draftCaptain?.name || saved[draftTeam].name}</button> : undefined }))}</div></div>}
         {unlocked && !state.team?.ids.length && <div className="match-host-card"><h3>Host this match</h3><p className="note">Start it today, or choose a kickoff time. The 90-minute clock only begins when an admin presses Start match.</p><div className="button-row"><button className="b pri" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length} onClick={() => hostMatch()}>Host now</button></div><label htmlFor="match-kickoff">Schedule kickoff</label><div className="schedule-row"><input id="match-kickoff" type="datetime-local" value={scheduleInput} onChange={(event) => setScheduleInput(event.target.value)} /><button className="b line" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length || !scheduleInput} onClick={scheduleMatch}>Schedule match</button></div></div>}
         {unlocked && state.team?.ids.length && <div className="match-host-card"><h3>Match already hosted</h3><p className="note">Finish or delete the current match before hosting another one.</p><button className="b pri" onClick={() => setTab("match")}>Open current match</button></div>}

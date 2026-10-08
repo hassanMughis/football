@@ -292,6 +292,9 @@ table { width:100%; border-collapse:collapse; }th,td { padding:10px 4px; text-al
 .design-picker span { font-size:10px; text-align:center; }
 .design-picker.is-small img { width:42px; height:63px; }
 .balanced-team-grid { align-items:start; margin-top:12px; }.balanced-team-card { margin:0; padding:12px; min-width:0; }.balanced-team-card label:first-child { margin-top:0; }.balanced-team-card .rowp { gap:5px; }.balanced-team-card .chip { font-size:11px; }.balanced-use-button { width:100%; margin-top:10px; }
+.team-balance-warning { display:grid; gap:3px; margin:12px 0; padding:11px 13px; border:1px solid color-mix(in srgb,#fbbc04 58%,var(--line)); border-radius:10px; background:color-mix(in srgb,#fbbc04 10%,var(--s1)); }
+.team-balance-warning strong { color:#fdd663; font-size:13px; }
+.team-balance-warning span { color:var(--mu); font-size:12px; line-height:1.45; }
 @keyframes sync-pulse { to { opacity:.3; } }
 @keyframes draft-hand-pulse { to { transform:translateY(-5px) scale(1.08); } }
 .draft-captain-left.is-turn .draft-hand { animation-name:draft-left-hand-pulse; }
