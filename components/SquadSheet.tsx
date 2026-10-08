@@ -1016,8 +1016,15 @@ export default function SquadSheet() {
   const [accessChecked, setAccessChecked] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordChangeError, setPasswordChangeError] = useState("");
+  const [passwordChangeSuccess, setPasswordChangeSuccess] = useState(false);
+  const [passwordChanging, setPasswordChanging] = useState(false);
   const hydrated = useRef(false);
   const saveSequence = useRef(0);
   const lastSyncedFingerprint = useRef("");
@@ -1169,16 +1176,36 @@ export default function SquadSheet() {
       } catch { /* The existing screen remains usable while Realtime reconnects. */ }
     };
 
+    const refreshAdminAccess = async () => {
+      if (!unlocked) return;
+      try {
+        const response = await fetch("/api/auth", { cache: "no-store" });
+        if (!response.ok || disposed) return;
+        const result = await response.json() as { authenticated?: boolean };
+        if (!result.authenticated && !disposed) {
+          setUnlocked(false);
+          setEditId("");
+          setShowGoal(false);
+          setDraggedFormationId("");
+        }
+      } catch { /* A temporary network error should not sign out a valid admin. */ }
+    };
+
     const subscribe = () => {
       const generation = ++subscriptionGeneration;
       channel = client
         .channel("squad-sheet-state")
+        .on("broadcast", { event: "password-changed" }, () => {
+          if (disposed || generation !== subscriptionGeneration) return;
+          void refreshAdminAccess();
+        })
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "squad_settings", filter: "id=eq.1" },
           () => {
             if (disposed || generation !== subscriptionGeneration) return;
             void refreshFromApi();
+            void refreshAdminAccess();
           },
         )
         .subscribe((status) => {
@@ -1187,6 +1214,7 @@ export default function SquadSheet() {
             browserOffline = false;
             setSyncStatus("saved");
             void refreshFromApi();
+            void refreshAdminAccess();
           } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
             setSyncStatus(browserOffline ? "offline" : "reconnecting");
           }
@@ -1215,8 +1243,9 @@ export default function SquadSheet() {
       void restartSubscription();
     };
     const handleVisibility = () => {
-      if (document.visibilityState === "visible" && (!client.realtime.isConnected() || channel?.state !== "joined")) {
-        void restartSubscription();
+      if (document.visibilityState === "visible") {
+        void refreshAdminAccess();
+        if (!client.realtime.isConnected() || channel?.state !== "joined") void restartSubscription();
       }
     };
     window.addEventListener("offline", handleOffline);
@@ -1230,7 +1259,7 @@ export default function SquadSheet() {
       document.removeEventListener("visibilitychange", handleVisibility);
       if (channel) void client.removeChannel(channel);
     };
-  }, [accessChecked, hydrationReady]);
+  }, [accessChecked, hydrationReady, unlocked]);
 
   const active = useMemo(() => state.players.filter((player) => player.on !== false), [state.players]);
   const teamSize = state.want ? Math.min(state.want, active.length) : active.length;
@@ -2063,12 +2092,59 @@ export default function SquadSheet() {
     setPasswordError("");
     try {
       const response = await fetch("/api/auth", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
-      if (!response.ok) { setPasswordError("Incorrect password. Try again."); return; }
+      const result = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) { setPasswordError(result?.error || "Incorrect password. Try again."); return; }
       setPassword("");
       setShowAdminLogin(false);
       setUnlocked(true);
     } catch {
       setPasswordError("Could not reach the server. Try again.");
+    }
+  };
+  const closePasswordChange = () => {
+    setShowPasswordChange(false);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setPasswordChangeError("");
+    setPasswordChangeSuccess(false);
+    setPasswordChanging(false);
+  };
+  const openPasswordChange = () => {
+    setShowAdminLogin(false);
+    setPasswordError("");
+    setShowPasswordChange(true);
+    setPasswordChangeError("");
+    setPasswordChangeSuccess(false);
+  };
+  const changePassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPasswordChangeError("");
+    if (newPassword !== confirmPassword) {
+      setPasswordChangeError("The new passwords do not match.");
+      return;
+    }
+    setPasswordChanging(true);
+    try {
+      const response = await fetch("/api/auth", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const result = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) {
+        setPasswordChangeError(result?.error || "Could not change the password.");
+        return;
+      }
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordChangeSuccess(true);
+      setUnlocked(true);
+    } catch {
+      setPasswordChangeError("Could not reach the server. Try again.");
+    } finally {
+      setPasswordChanging(false);
     }
   };
   const lock = async () => {
@@ -2095,6 +2171,7 @@ export default function SquadSheet() {
     <div className={`sync-status is-${syncStatus}`}>
       {unlocked && <button className="sport-switch" type="button" onClick={switchSportMode}>{cricketMode ? "Switch to football" : "Switch to cricket"}</button>}
       <span className="sync-message" role="status" aria-live="polite"><i className="sync-dot" />{syncText}</span>
+      {unlocked && <button className="admin-session-button" type="button" onClick={openPasswordChange}>Change password</button>}
       <button className="admin-session-button" type="button" onClick={() => unlocked ? void lock() : setShowAdminLogin(true)}>{unlocked ? "Exit admin" : "Admin login"}</button>
     </div>
     <main>{cricketMode ? <CricketWorkspace value={state.cricket} unlocked={unlocked} uploadPlayerImage={preparePlayerImage} uploadTeamFlag={uploadTeamFlag} onChange={(updater) => setState((current) => ({ ...current, cricket: updater(current.cricket) }))} /> : state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : MatchView()}</main>
@@ -2105,9 +2182,31 @@ export default function SquadSheet() {
       <h1 id="admin-login-title">Enter password</h1>
       <p className="note">Admin mode can manage players, teams and matches.</p>
       <label htmlFor="app-password">Password</label>
-      <input id="app-password" type="password" inputMode="numeric" autoComplete="current-password" autoFocus value={password} onChange={(event) => { setPassword(event.target.value); setPasswordError(""); }} />
+      <input id="app-password" type="password" autoComplete="current-password" autoFocus value={password} onChange={(event) => { setPassword(event.target.value); setPasswordError(""); }} />
+      <button className="admin-password-link" type="button" onClick={openPasswordChange}>Change password</button>
       {passwordError && <p className="access-error" role="alert">{passwordError}</p>}
       <button className="b pri" type="submit">Unlock admin mode</button>
+    </form></div>}
+    {showPasswordChange && <div className="admin-login-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closePasswordChange(); }}><form className="access-card admin-login-card" onSubmit={changePassword} role="dialog" aria-modal="true" aria-labelledby="change-password-title">
+      <button className="admin-login-close" type="button" onClick={closePasswordChange} aria-label="Close password change">×</button>
+      <img src="/badges/squad-sheet-fc.png" alt="" />
+      <p className="access-kicker">ADMIN SECURITY</p>
+      <h1 id="change-password-title">{passwordChangeSuccess ? "Password changed" : "Change password"}</h1>
+      {passwordChangeSuccess ? <>
+        <p className="access-success" role="status">Your new admin password is active on every device. Other admin sessions have been signed out.</p>
+        <button className="b pri" type="button" onClick={closePasswordChange}>Done</button>
+      </> : <>
+        <p className="note">Enter the current password before choosing a new one.</p>
+        <label htmlFor="current-admin-password">Current password</label>
+        <input id="current-admin-password" type="password" autoComplete="current-password" autoFocus value={currentPassword} onChange={(event) => { setCurrentPassword(event.target.value); setPasswordChangeError(""); }} />
+        <label htmlFor="new-admin-password">New password</label>
+        <input id="new-admin-password" type="password" autoComplete="new-password" minLength={8} maxLength={128} value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setPasswordChangeError(""); }} />
+        <p className="password-requirement">Use at least 8 characters.</p>
+        <label htmlFor="confirm-admin-password">Confirm new password</label>
+        <input id="confirm-admin-password" type="password" autoComplete="new-password" minLength={8} maxLength={128} value={confirmPassword} onChange={(event) => { setConfirmPassword(event.target.value); setPasswordChangeError(""); }} />
+        {passwordChangeError && <p className="access-error" role="alert">{passwordChangeError}</p>}
+        <button className="b pri" type="submit" disabled={passwordChanging}>{passwordChanging ? "Changing password…" : "Change password"}</button>
+      </>}
     </form></div>}
   </div>;
 }

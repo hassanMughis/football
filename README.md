@@ -4,7 +4,7 @@ A mobile-first Next.js squad manager with shared football and cricket modes, pla
 
 ## Features
 
-- Entry password: `3456` (remembered for the current browser tab)
+- Supabase Auth admin login with a 30-day session and secure password changes
 - Add, edit, rate, activate, deactivate, and remove players
 - Upload transparent player photos to Supabase Storage
 - Four football card designs and four generated cricket card designs, each with a matching gray fallback version
@@ -26,7 +26,10 @@ The ignored `.env.local` file must contain:
 ```text
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
+ADMIN_EMAIL=your-admin-user@example.com
 ```
+
+Create that email/password user in **Supabase Dashboard â†’ Authentication â†’ Users** and enable **Auto Confirm User**. The email must exactly match `ADMIN_EMAIL`. The app does not contain a fallback admin password.
 
 For a new project, run `supabase/schema.sql` first. Then run `supabase/rich-player-migration.sql` and `supabase/add-cricket-mode.sql`. For an existing project that already has rich player data, run only `supabase/add-cricket-mode.sql` for this update.
 
@@ -45,8 +48,8 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000` and enter `3456`.
+Open `http://localhost:3000` and sign in with the password belonging to the Supabase Auth user configured by `ADMIN_EMAIL`.
 
 ## Vercel deployment
 
-Import this repository as a Next.js project and add both Supabase variables from `.env.local` to the Vercel project's Environment Variables. Local environment files are intentionally excluded from Git. Redeploy after adding or changing those variables.
+Import this repository as a Next.js project and add the three variables above to the Vercel project's Environment Variables. Local environment files are intentionally excluded from Git. Redeploy after adding or changing those variables.
