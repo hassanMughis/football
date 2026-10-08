@@ -1124,6 +1124,20 @@ export default function SquadSheet() {
     let restarting = false;
     let browserOffline = !navigator.onLine;
 
+    const refreshFromApi = async () => {
+      try {
+        const response = await fetch("/api/state", { cache: "no-store" });
+        if (!response.ok || disposed) return;
+        const payload = await response.json() as { state?: unknown };
+        if (!payload.state || disposed) return;
+        const refreshed = restoreState(payload.state);
+        lastSyncedFingerprint.current = sharedStateFingerprint(refreshed);
+        try { localStorage.setItem("sqs1", JSON.stringify(refreshed)); } catch { /* Realtime still updates memory if browser storage is unavailable. */ }
+        setState((current) => ({ ...refreshed, tab: current.tab, sub: current.sub }));
+        setSyncStatus("saved");
+      } catch { /* The existing screen remains usable while Realtime reconnects. */ }
+    };
+
     const subscribe = () => {
       const generation = ++subscriptionGeneration;
       channel = client
@@ -1131,15 +1145,17 @@ export default function SquadSheet() {
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "squad_settings", filter: "id=eq.1" },
-          (payload) => {
+          () => {
             if (disposed || generation !== subscriptionGeneration) return;
-            const row = payload.new as { app_state?: unknown };
-            if (!row.app_state || typeof row.app_state !== "object" || Array.isArray(row.app_state)) return;
-            const refreshed = restoreState(row.app_state);
-            lastSyncedFingerprint.current = sharedStateFingerprint(refreshed);
-            try { localStorage.setItem("sqs1", JSON.stringify(refreshed)); } catch { /* Realtime still updates memory if browser storage is unavailable. */ }
-            setState((current) => ({ ...refreshed, tab: current.tab, sub: current.sub }));
-            setSyncStatus("saved");
+            void refreshFromApi();
+          },
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "cricket_players" },
+          () => {
+            if (disposed || generation !== subscriptionGeneration) return;
+            void refreshFromApi();
           },
         )
         .subscribe((status) => {

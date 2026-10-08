@@ -1,8 +1,10 @@
 export const CRICKET_ROLES = ["Batter", "Bowler", "All-rounder", "Wicketkeeper"] as const;
 export const CRICKET_CARD_STYLES = ["electric", "classic", "eclipse", "crimson"] as const;
+export const CRICKET_STAT_NAMES = ["BAT", "BWL", "FLD", "SPD", "PWR", "TEC"] as const;
 
 export type CricketRole = typeof CRICKET_ROLES[number];
 export type CricketCardStyle = typeof CRICKET_CARD_STYLES[number];
+export type CricketStatName = typeof CRICKET_STAT_NAMES[number];
 export type CricketTab = "match" | "team" | "players";
 export type CricketPlayer = {
   id: string;
@@ -15,6 +17,7 @@ export type CricketPlayer = {
   image?: string;
   flag?: string;
   cardStyle: CricketCardStyle;
+  stats?: Partial<Record<CricketStatName, number>>;
   active: boolean;
 };
 
@@ -103,6 +106,11 @@ const normalizePlayer = (value: unknown, index: number): CricketPlayer | null =>
   const cardStyle = CRICKET_CARD_STYLES.includes(requestedCardStyle as CricketCardStyle)
     ? requestedCardStyle as CricketCardStyle
     : legacyCardStyles[requestedCardStyle] || "electric";
+  const rawStats = isRecord(value.stats) ? value.stats : {};
+  const stats = Object.fromEntries(CRICKET_STAT_NAMES.flatMap((label) => {
+    const number = Number(rawStats[label]);
+    return Number.isInteger(number) && number >= 1 && number <= 99 ? [[label, number]] : [];
+  })) as Partial<Record<CricketStatName, number>>;
   return {
     id: String(value.id || `cricket-${index}`),
     name: name.slice(0, 60),
@@ -114,6 +122,7 @@ const normalizePlayer = (value: unknown, index: number): CricketPlayer | null =>
     image: typeof value.image === "string" && value.image ? value.image : undefined,
     flag: typeof value.flag === "string" && value.flag ? value.flag : "PK",
     cardStyle,
+    stats: Object.keys(stats).length ? stats : undefined,
     active: value.active !== false,
   };
 };
@@ -192,17 +201,16 @@ export function cricketOverall(player: CricketPlayer) {
   return player.customOverall ?? (player.rating ? Math.max(45, Math.min(99, Math.round(44 + player.rating * 5))) : 0);
 }
 
-export function cricketStats(player: CricketPlayer): Array<[string, number | "–"]> {
+export function cricketStats(player: CricketPlayer): Array<[CricketStatName, number | "–"]> {
   const overall = cricketOverall(player);
-  if (!overall) return [["BAT", "–"], ["BWL", "–"], ["FLD", "–"], ["SPD", "–"], ["PWR", "–"], ["TEC", "–"]];
+  if (!overall) return CRICKET_STAT_NAMES.map((label) => [label, player.stats?.[label] ?? "–"]);
   const offsets: Record<CricketRole, number[]> = {
     Batter: [8, -18, 2, 2, 7, 9],
     Bowler: [-15, 10, 3, 4, 2, 1],
     "All-rounder": [4, 5, 4, 3, 4, 4],
     Wicketkeeper: [5, -12, 11, 6, 2, 7],
   };
-  const labels = ["BAT", "BWL", "FLD", "SPD", "PWR", "TEC"];
-  return labels.map((label, index) => [label, Math.max(1, Math.min(99, overall + offsets[player.role][index]))]);
+  return CRICKET_STAT_NAMES.map((label, index) => [label, player.stats?.[label] ?? Math.max(1, Math.min(99, overall + offsets[player.role][index]))]);
 }
 
 const balanceCost = (first: CricketPlayer[], second: CricketPlayer[]) => {

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CRICKET_CARD_STYLES,
   CRICKET_ROLES,
+  CRICKET_STAT_NAMES,
   CricketCardStyle,
   CricketDeliveryKind,
   CricketInnings,
@@ -16,14 +17,15 @@ import {
   makeBalancedCricketTeams,
 } from "@/lib/cricket";
 
-const CARD_DESIGNS: Record<CricketCardStyle, { name: string; tier: string }> = {
-  electric: { name: "Super Rare Blue", tier: "SUPER RARE" },
-  classic: { name: "Legendary Gold", tier: "LEGENDARY" },
-  eclipse: { name: "Iconic Purple", tier: "ICONIC" },
-  crimson: { name: "Elite Red", tier: "ELITE" },
+const CARD_DESIGNS: Record<CricketCardStyle, { name: string; tier: string; image: string; placeholder: string }> = {
+  electric: { name: "Super Rare Blue", tier: "SUPER RARE", image: "/card-templates/cricket-electric.png", placeholder: "/card-templates/cricket-electric-placeholder.png" },
+  classic: { name: "Legendary Gold", tier: "LEGENDARY", image: "/card-templates/cricket-gold.png", placeholder: "/card-templates/cricket-gold-placeholder.png" },
+  eclipse: { name: "Iconic Purple", tier: "ICONIC", image: "/card-templates/cricket-purple.png", placeholder: "/card-templates/cricket-purple-placeholder.png" },
+  crimson: { name: "Elite Red", tier: "ELITE", image: "/card-templates/cricket-red.png", placeholder: "/card-templates/cricket-red-placeholder.png" },
 };
 
 const ROLE_SHORT: Record<CricketPlayer["role"], string> = { Batter: "BAT", Bowler: "BWL", "All-rounder": "AR", Wicketkeeper: "WK" };
+const emptyStatDraft = () => Object.fromEntries(CRICKET_STAT_NAMES.map((label) => [label, ""])) as Record<typeof CRICKET_STAT_NAMES[number], string>;
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((word) => word[0] || "").join("").toUpperCase() || "?";
 const flagCode = (value?: string) => /^[a-z]{2}$/i.test(value || "") ? value!.toLowerCase() : "";
 const flagSource = (value?: string) => flagCode(value) === "pk" ? "/flags/pk.svg" : flagCode(value) ? `https://flagcdn.com/w80/${flagCode(value)}.png` : value && /^(https?:|data:image\/|blob:)/i.test(value) ? value : "";
@@ -79,19 +81,13 @@ function CricketPlayerCard({ player, children }: { player: CricketPlayer; childr
   const stats = Object.fromEntries(cricketStats(player));
   return <article className={`player-card cricket-player-card${player.active ? "" : " is-inactive"}`}>
     <div className={`cricket-card-art cricket-card-${player.cardStyle} ${player.image ? "has-photo" : "is-placeholder"}`}>
-      <div className="cricket-card-shell" aria-hidden="true" />
-      <div className="cricket-card-energy" aria-hidden="true"><i /><i /><i /></div>
-      <div className="cricket-card-overall"><strong>{overall}</strong><span>OVERALL</span></div>
-      <div className="cricket-card-mark" aria-hidden="true"><span>CR</span><small>CRICKET</small></div>
+      <img className="cricket-card-template" src={player.image ? design.image : design.placeholder} alt="" aria-hidden="true" />
+      <div className="cricket-card-overall"><strong>{overall}</strong><span>OVR</span><b>{ROLE_SHORT[player.role]}</b></div>
       <div className="cricket-card-side-stats">
         {(["BAT", "BWL", "FLD"] as const).map((label) => <div key={label}><span>{label}</span><strong>{stats[label]}</strong></div>)}
       </div>
-      <div className="cricket-card-portrait">
-        {player.image
-          ? <img src={player.image} alt={`${player.name} portrait`} />
-          : <div className="cricket-card-silhouette" role="img" aria-label={`${player.name} has no profile image`}><span /><i /></div>}
-      </div>
-      <div className="cricket-card-role"><b>{ROLE_SHORT[player.role]}</b><span>{flag ? <img src={flag} alt={`${player.name} flag`} /> : player.flag || ""}</span></div>
+      {player.image && <div className="cricket-card-portrait"><img src={player.image} alt={`${player.name} portrait`} /></div>}
+      <div className="cricket-card-role"><span>{flag ? <img src={flag} alt={`${player.name} flag`} /> : player.flag || ""}</span></div>
       <div className="cricket-card-name"><h3 className={player.name.length > 18 ? "is-long" : player.name.length > 13 ? "is-medium" : ""}>{player.name}</h3><span>{player.batting} · {player.bowling}</span></div>
       <div className="cricket-card-bottom-stats">
         {(["PWR", "SPD", "TEC"] as const).map((label) => <div key={label}><span>{label}</span><strong>{stats[label]}</strong></div>)}
@@ -110,7 +106,7 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
   const [editingId, setEditingId] = useState("");
   const [uploading, setUploading] = useState(false);
   const [formError, setFormError] = useState("");
-  const [draft, setDraft] = useState({ name: "", rating: 0, customOverall: "", role: "All-rounder" as CricketPlayer["role"], batting: "Right hand" as CricketPlayer["batting"], bowling: "Right-arm medium", image: "", flag: "PK", cardStyle: "electric" as CricketCardStyle });
+  const [draft, setDraft] = useState({ name: "", rating: 0, customOverall: "", role: "All-rounder" as CricketPlayer["role"], batting: "Right hand" as CricketPlayer["batting"], bowling: "Right-arm medium", image: "", flag: "PK", cardStyle: "electric" as CricketCardStyle, stats: emptyStatDraft() });
   const activePlayers = useMemo(() => value.players.filter((item) => item.active), [value.players]);
   const player = (id: string) => value.players.find((item) => item.id === id);
   const update = onChange;
@@ -123,7 +119,7 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
 
   const resetDraft = () => {
     setEditingId("");
-    setDraft({ name: "", rating: 0, customOverall: "", role: "All-rounder", batting: "Right hand", bowling: "Right-arm medium", image: "", flag: "PK", cardStyle: "electric" });
+    setDraft({ name: "", rating: 0, customOverall: "", role: "All-rounder", batting: "Right hand", bowling: "Right-arm medium", image: "", flag: "PK", cardStyle: "electric", stats: emptyStatDraft() });
     setFormError("");
   };
 
@@ -132,6 +128,7 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
     const customOverall = draft.customOverall ? Number(draft.customOverall) : undefined;
     if (!name) { setFormError("Enter the player's name."); return; }
     if (customOverall !== undefined && (!Number.isInteger(customOverall) || customOverall < 1 || customOverall > 99)) { setFormError("Custom OVR must be a whole number from 1 to 99."); return; }
+    if (CRICKET_STAT_NAMES.some((label) => draft.stats[label] && (!Number.isInteger(Number(draft.stats[label])) || Number(draft.stats[label]) < 1 || Number(draft.stats[label]) > 99))) { setFormError("Cricket attributes must be whole numbers from 1 to 99, or left blank for automatic values."); return; }
     const saved: CricketPlayer = {
       id: editingId || (globalThis.crypto?.randomUUID?.() || `cricket-${Date.now()}`),
       name,
@@ -143,6 +140,10 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
       image: draft.image || undefined,
       flag: draft.flag.trim() || "PK",
       cardStyle: draft.cardStyle,
+      stats: Object.fromEntries(CRICKET_STAT_NAMES.flatMap((label) => {
+        const value = Number(draft.stats[label]);
+        return Number.isInteger(value) && value >= 1 && value <= 99 ? [[label, value]] : [];
+      })),
       active: editingId ? player(editingId)?.active !== false : true,
     };
     update((current) => ({ ...current, players: editingId ? current.players.map((item) => item.id === editingId ? saved : item) : [...current.players, saved], teams: editingId ? current.teams : null, match: editingId ? current.match : emptyCricketMatch() }));
@@ -151,7 +152,7 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
 
   const editPlayer = (item: CricketPlayer) => {
     setEditingId(item.id);
-    setDraft({ name: item.name, rating: item.rating, customOverall: item.customOverall ? String(item.customOverall) : "", role: item.role, batting: item.batting, bowling: item.bowling, image: item.image || "", flag: item.flag || "PK", cardStyle: item.cardStyle });
+    setDraft({ name: item.name, rating: item.rating, customOverall: item.customOverall ? String(item.customOverall) : "", role: item.role, batting: item.batting, bowling: item.bowling, image: item.image || "", flag: item.flag || "PK", cardStyle: item.cardStyle, stats: Object.fromEntries(CRICKET_STAT_NAMES.map((label) => [label, item.stats?.[label] ? String(item.stats[label]) : ""])) as Record<typeof CRICKET_STAT_NAMES[number], string> });
     setFormError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -301,8 +302,9 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
       <div className="row2"><div><label>Rating (0–10)</label><input type="number" min="0" max="10" step="0.5" value={draft.rating || ""} disabled={Boolean(draft.customOverall)} onChange={(event) => setDraft((current) => ({ ...current, rating: Number(event.target.value) }))} /></div><div><label>Custom OVR</label><input type="number" min="1" max="99" step="1" value={draft.customOverall} onChange={(event) => setDraft((current) => ({ ...current, customOverall: event.target.value, rating: event.target.value ? 0 : current.rating }))} placeholder="Auto calculated" /></div></div>
       <div className="row2"><div><label>Primary role</label><select value={draft.role} onChange={(event) => setDraft((current) => ({ ...current, role: event.target.value as CricketPlayer["role"] }))}>{CRICKET_ROLES.map((role) => <option key={role}>{role}</option>)}</select></div><div><label>Batting</label><select value={draft.batting} onChange={(event) => setDraft((current) => ({ ...current, batting: event.target.value as CricketPlayer["batting"] }))}><option>Right hand</option><option>Left hand</option></select></div></div>
       <label>Bowling style</label><input value={draft.bowling} onChange={(event) => setDraft((current) => ({ ...current, bowling: event.target.value }))} placeholder="Right-arm fast, left-arm spin…" />
+      <label>Cricket attributes <small className="label-note">Optional · leave blank for role-based automatic values</small></label><div className="cricket-attribute-inputs">{CRICKET_STAT_NAMES.map((label) => <div key={label}><span>{label}</span><input type="number" min="1" max="99" step="1" value={draft.stats[label]} onChange={(event) => { const value = event.target.value; setDraft((current) => ({ ...current, stats: { ...current.stats, [label]: value } })); }} placeholder="Auto" /></div>)}</div>
       <label>Player photo</label><div className="photo-field">{draft.image ? <img src={draft.image} alt="Player preview" /> : <span className="mini-silhouette"><span /></span>}<label className="b line photo-button">{uploading ? "Uploading…" : "Upload photo"}<input type="file" accept="image/*" disabled={uploading} onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setUploading(true); setFormError(""); try { const image = await uploadPlayerImage(file); setDraft((current) => ({ ...current, image })); } catch (error) { setFormError(error instanceof Error ? error.message : "Upload failed."); } finally { setUploading(false); event.target.value = ""; } }} /></label>{draft.image && <button className="b line" type="button" onClick={() => setDraft((current) => ({ ...current, image: "" }))}>Remove</button>}</div>
-      <label>Card design</label><div className="design-picker cricket-design-picker">{CRICKET_CARD_STYLES.map((style) => <button type="button" key={style} className={draft.cardStyle === style ? "on" : ""} onClick={() => setDraft((current) => ({ ...current, cardStyle: style }))}><i className={`cricket-design-swatch cricket-card-${style}`} aria-hidden="true"><b>90</b><span>CR</span></i><span>{CARD_DESIGNS[style].name}</span></button>)}</div>
+      <label>Card design</label><div className="design-picker cricket-design-picker">{CRICKET_CARD_STYLES.map((style) => <button type="button" key={style} className={draft.cardStyle === style ? "on" : ""} onClick={() => setDraft((current) => ({ ...current, cardStyle: style }))}><img src={CARD_DESIGNS[style].image} alt="" /><span>{CARD_DESIGNS[style].name}</span></button>)}</div>
       {formError && <p className="access-error" role="alert">{formError}</p>}
       <div className="button-row"><button className="b pri" type="button" disabled={uploading} onClick={savePlayer}>{editingId ? "Save player" : "Add player"}</button>{editingId && <button className="b line" type="button" onClick={resetDraft}>Cancel</button>}</div>
     </section>}

@@ -7,7 +7,7 @@ A mobile-first Next.js squad manager with shared football and cricket modes, pla
 - Entry password: `3456` (remembered for the current browser tab)
 - Add, edit, rate, activate, deactivate, and remove players
 - Upload transparent player photos to Supabase Storage
-- Four card designs with a gray fallback silhouette
+- Four football card designs and four generated cricket card designs, each with a matching gray fallback version
 - Card OVR and PAC/SHO/PAS/DRI/DEF/PHY generated from rating and speciality
 - Generate and shuffle two balanced teams using rating and all six card stats
 - Use either generated side as the match team
@@ -30,7 +30,7 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 
 For a new project, run `supabase/schema.sql` first. Then run `supabase/rich-player-migration.sql` and `supabase/add-cricket-mode.sql`. For an existing project that already has rich player data, run only `supabase/add-cricket-mode.sql` for this update.
 
-The migration stores every football card field directly in `players`: stable player ID, name, 0–10 rating, speciality, card style, position, flag, photo URL, availability, balanced-team assignment, match-squad/captain state, OVR, and PAC/SHO/PAS/DRI/DEF/PHY. Scorers, assists, and minutes are stored in `match_events`. Cricket players, teams, innings, deliveries, commentary, and the shared sport mode are stored atomically in `squad_settings.app_state`; `sport_mode` mirrors the active mode for easy SQL inspection.
+The migration stores every football card field directly in `players`: stable player ID, name, 0–10 rating, speciality, card style, position, flag, photo URL, availability, balanced-team assignment, match-squad/captain state, OVR, and PAC/SHO/PAS/DRI/DEF/PHY. Scorers, assists, and minutes are stored in `match_events`. Cricket players are stored separately in `cricket_players`, including role, batting hand, bowling style, photo, card design, availability, OVR, and BAT/BWL/FLD/SPD/PWR/TEC attributes. Cricket teams, innings, deliveries, commentary, and the shared sport mode remain in `squad_settings.app_state`; `sport_mode` mirrors the active mode for easy SQL inspection.
 
 After running the migration, check all rich tables and Storage write/delete access with:
 

@@ -1,6 +1,6 @@
 import { getSupabaseConfig, supabaseRest } from "@/lib/supabase-rest";
 import { isAdmin } from "@/lib/admin-auth";
-import { restoreCricketState } from "@/lib/cricket";
+import { cricketOverall, cricketStats, restoreCricketState } from "@/lib/cricket";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +63,25 @@ type SettingsRow = {
 type EventRow = { scorer_client_id: string; assist_client_id: string | null; minute: number | null; team_number: number };
 type HistoryRow = { snapshot: unknown };
 type LineupPositionRow = { client_id: string; lineup_position: string | null };
+type CricketPlayerRow = {
+  client_id: string;
+  name: string;
+  rating: number;
+  custom_overall: number | null;
+  role: string;
+  batting_hand: string;
+  bowling_style: string;
+  image_url: string | null;
+  flag: string;
+  card_style: string;
+  active: boolean;
+  batting: number | null;
+  bowling: number | null;
+  fielding: number | null;
+  speed: number | null;
+  power: number | null;
+  technique: number | null;
+};
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -187,6 +206,7 @@ async function readDatabaseState() {
   let events: EventRow[] | null = null;
   let historyRows: HistoryRow[] = [];
   let lineupPositions = new Map<string, string>();
+  let cricketPlayerRows: CricketPlayerRow[] | null = null;
   try {
     const response = await supabaseRest("match_events?select=scorer_client_id,assist_client_id,minute,team_number&order=event_order.asc,id.asc");
     events = await response.json() as EventRow[];
@@ -200,6 +220,10 @@ async function readDatabaseState() {
     const positionRows = await response.json() as LineupPositionRow[];
     lineupPositions = new Map(positionRows.filter((row) => row.lineup_position).map((row) => [row.client_id, row.lineup_position!]));
   } catch { /* Preserve generated lineup positions from app_state on older schemas. */ }
+  try {
+    const response = await supabaseRest("cricket_players?select=client_id,name,rating,custom_overall,role,batting_hand,bowling_style,image_url,flag,card_style,active,batting,bowling,fielding,speed,power,technique&order=sort_order.asc,id.asc");
+    cricketPlayerRows = await response.json() as CricketPlayerRow[];
+  } catch { /* Preserve the embedded cricket roster until the cricket migration is run. */ }
 
   const base = settings.app_state;
   const players = rows.map((row) => ({
@@ -230,8 +254,33 @@ async function readDatabaseState() {
   const captain2 = rows.find((row) => row.team === 2 && row.is_captain)?.client_id || String(baseTeam2.captain || secondIds[0] || "");
   const positions1 = Object.fromEntries(rows.filter((row) => row.team === 1).map((row) => [row.client_id, lineupPositions.get(row.client_id) || (typeof basePositions1[row.client_id] === "string" ? String(basePositions1[row.client_id]) : "")]).filter((entry) => entry[1]));
   const positions2 = Object.fromEntries(rows.filter((row) => row.team === 2).map((row) => [row.client_id, lineupPositions.get(row.client_id) || (typeof basePositions2[row.client_id] === "string" ? String(basePositions2[row.client_id]) : "")]).filter((entry) => entry[1]));
+  const cricket = restoreCricketState(base.cricket);
+  if (cricketPlayerRows) {
+    cricket.players = cricketPlayerRows.map((row) => ({
+      id: row.client_id,
+      name: row.name,
+      rating: Number(row.rating) || 0,
+      customOverall: row.custom_overall ?? undefined,
+      role: row.role === "Batter" || row.role === "Bowler" || row.role === "Wicketkeeper" ? row.role : "All-rounder",
+      batting: row.batting_hand === "Left hand" ? "Left hand" : "Right hand",
+      bowling: row.bowling_style,
+      image: row.image_url || undefined,
+      flag: row.flag,
+      cardStyle: row.card_style === "classic" || row.card_style === "eclipse" || row.card_style === "crimson" ? row.card_style : "electric",
+      stats: {
+        ...(row.batting ? { BAT: row.batting } : {}),
+        ...(row.bowling ? { BWL: row.bowling } : {}),
+        ...(row.fielding ? { FLD: row.fielding } : {}),
+        ...(row.speed ? { SPD: row.speed } : {}),
+        ...(row.power ? { PWR: row.power } : {}),
+        ...(row.technique ? { TEC: row.technique } : {}),
+      },
+      active: row.active,
+    }));
+  }
   return {
     ...base,
+    cricket,
     players,
     history: historyRows.length ? historyRows.map((row) => row.snapshot).filter(isJsonObject) : base.history,
     team: matchIds.length ? { ids: matchIds, captain: captain1 } : null,
@@ -272,9 +321,34 @@ export async function PUT(request: Request) {
   try {
     const state = validateAndEnrichState(await request.json());
     try {
+      const cricketState = restoreCricketState(state.cricket);
+      const cricketPlayers = cricketState.players.map((player, sortOrder) => {
+        const stats = Object.fromEntries(cricketStats(player).map(([label, value]) => [label, typeof value === "number" ? value : null]));
+        return {
+          id: player.id,
+          name: player.name,
+          rating: player.rating,
+          customOverall: player.customOverall ?? null,
+          overall: cricketOverall(player) || null,
+          role: player.role,
+          batting: player.batting,
+          bowling: player.bowling,
+          image: player.image || null,
+          flag: player.flag || "PK",
+          cardStyle: player.cardStyle,
+          active: player.active,
+          sortOrder,
+          stats,
+        };
+      });
+      await supabaseRest("rpc/save_cricket_players", {
+        method: "POST",
+        body: JSON.stringify({ p_players: cricketPlayers }),
+      });
+      const databaseState = { ...state, cricket: { ...cricketState, players: [] } };
       await supabaseRest("rpc/save_squad_sheet_state", {
         method: "POST",
-        body: JSON.stringify({ p_state: state }),
+        body: JSON.stringify({ p_state: databaseState }),
       });
       return Response.json({ state, source: "database" });
     } catch {
