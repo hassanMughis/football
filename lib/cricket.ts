@@ -1,5 +1,5 @@
 export const CRICKET_ROLES = ["Batter", "Bowler", "All-rounder", "Wicketkeeper"] as const;
-export const CRICKET_CARD_STYLES = ["classic", "royal", "electric", "crimson", "eclipse", "inferno", "aurora", "prism"] as const;
+export const CRICKET_CARD_STYLES = ["electric", "classic", "eclipse", "crimson"] as const;
 
 export type CricketRole = typeof CRICKET_ROLES[number];
 export type CricketCardStyle = typeof CRICKET_CARD_STYLES[number];
@@ -93,7 +93,16 @@ const normalizePlayer = (value: unknown, index: number): CricketPlayer | null =>
   const name = String(value.name || "").trim();
   if (!name) return null;
   const role = CRICKET_ROLES.includes(value.role as CricketRole) ? value.role as CricketRole : "All-rounder";
-  const cardStyle = CRICKET_CARD_STYLES.includes(value.cardStyle as CricketCardStyle) ? value.cardStyle as CricketCardStyle : "classic";
+  const legacyCardStyles: Record<string, CricketCardStyle> = {
+    royal: "classic",
+    inferno: "crimson",
+    aurora: "electric",
+    prism: "eclipse",
+  };
+  const requestedCardStyle = String(value.cardStyle || "");
+  const cardStyle = CRICKET_CARD_STYLES.includes(requestedCardStyle as CricketCardStyle)
+    ? requestedCardStyle as CricketCardStyle
+    : legacyCardStyles[requestedCardStyle] || "electric";
   return {
     id: String(value.id || `cricket-${index}`),
     name: name.slice(0, 60),

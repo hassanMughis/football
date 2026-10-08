@@ -16,15 +16,11 @@ import {
   makeBalancedCricketTeams,
 } from "@/lib/cricket";
 
-const CARD_DESIGNS: Record<CricketCardStyle, { name: string; frame: string; clean: string }> = {
-  classic: { name: "Classic Gold", frame: "/card-templates/classic-gold.png", clean: "/card-templates/classic-gold-clean.png" },
-  royal: { name: "Royal Gold", frame: "/card-templates/royal-gold.png", clean: "/card-templates/royal-gold-clean.png" },
-  electric: { name: "Electric Blue", frame: "/card-templates/electric-blue.png", clean: "/card-templates/electric-blue-clean.png" },
-  crimson: { name: "Crimson", frame: "/card-templates/crimson-obsidian.png", clean: "/card-templates/crimson-obsidian-clean.png" },
-  eclipse: { name: "Amethyst Eclipse", frame: "/card-templates/eclipse-amethyst.png", clean: "/card-templates/eclipse-amethyst-clean.png" },
-  inferno: { name: "Crimson Inferno", frame: "/card-templates/inferno-crimson.png", clean: "/card-templates/inferno-crimson-clean.png" },
-  aurora: { name: "Emerald Aurora", frame: "/card-templates/aurora-emerald.png", clean: "/card-templates/aurora-emerald-clean.png" },
-  prism: { name: "Holographic Prism", frame: "/card-templates/prism-holographic.png", clean: "/card-templates/prism-holographic-clean.png" },
+const CARD_DESIGNS: Record<CricketCardStyle, { name: string; tier: string }> = {
+  electric: { name: "Super Rare Blue", tier: "SUPER RARE" },
+  classic: { name: "Legendary Gold", tier: "LEGENDARY" },
+  eclipse: { name: "Iconic Purple", tier: "ICONIC" },
+  crimson: { name: "Elite Red", tier: "ELITE" },
 };
 
 const ROLE_SHORT: Record<CricketPlayer["role"], string> = { Batter: "BAT", Bowler: "BWL", "All-rounder": "AR", Wicketkeeper: "WK" };
@@ -80,13 +76,27 @@ function CricketPlayerCard({ player, children }: { player: CricketPlayer; childr
   const design = CARD_DESIGNS[player.cardStyle];
   const flag = flagSource(player.flag);
   const overall = cricketOverall(player) || "–";
+  const stats = Object.fromEntries(cricketStats(player));
   return <article className={`player-card cricket-player-card${player.active ? "" : " is-inactive"}`}>
-    <div className={`player-card__visual card-theme-${player.cardStyle}`}>
-      <img className="player-card__frame" src={player.image ? design.clean : design.frame} alt="" aria-hidden="true" />
-      <div className="player-card__strip"><strong>{overall}</strong><span>{ROLE_SHORT[player.role]}</span><span className="player-card__flag">{flag ? <img src={flag} alt={`${player.name} flag`} /> : player.flag || ""}</span><span className="cricket-card-ball" aria-hidden="true" /></div>
-      <div className="player-card__photo">{player.image && <img className="is-portrait" src={player.image} alt={`${player.name} portrait`} />}</div>
-      <div className="player-card__identity"><h3 className={player.name.length > 18 ? "is-long" : player.name.length > 13 ? "is-medium" : ""}>{player.name}</h3><p>{player.role} · {player.batting}</p></div>
-      <div className="player-card__stats">{cricketStats(player).map(([label, stat]) => <div key={label}><strong>{stat}</strong><span>{label}</span></div>)}</div>
+    <div className={`cricket-card-art cricket-card-${player.cardStyle} ${player.image ? "has-photo" : "is-placeholder"}`}>
+      <div className="cricket-card-shell" aria-hidden="true" />
+      <div className="cricket-card-energy" aria-hidden="true"><i /><i /><i /></div>
+      <div className="cricket-card-overall"><strong>{overall}</strong><span>OVERALL</span></div>
+      <div className="cricket-card-mark" aria-hidden="true"><span>CR</span><small>CRICKET</small></div>
+      <div className="cricket-card-side-stats">
+        {(["BAT", "BWL", "FLD"] as const).map((label) => <div key={label}><span>{label}</span><strong>{stats[label]}</strong></div>)}
+      </div>
+      <div className="cricket-card-portrait">
+        {player.image
+          ? <img src={player.image} alt={`${player.name} portrait`} />
+          : <div className="cricket-card-silhouette" role="img" aria-label={`${player.name} has no profile image`}><span /><i /></div>}
+      </div>
+      <div className="cricket-card-role"><b>{ROLE_SHORT[player.role]}</b><span>{flag ? <img src={flag} alt={`${player.name} flag`} /> : player.flag || ""}</span></div>
+      <div className="cricket-card-name"><h3 className={player.name.length > 18 ? "is-long" : player.name.length > 13 ? "is-medium" : ""}>{player.name}</h3><span>{player.batting} · {player.bowling}</span></div>
+      <div className="cricket-card-bottom-stats">
+        {(["PWR", "SPD", "TEC"] as const).map((label) => <div key={label}><span>{label}</span><strong>{stats[label]}</strong></div>)}
+      </div>
+      <div className="cricket-card-tier">{design.tier}</div>
     </div>
     <div className="player-card__meta"><span>{player.customOverall ? `${player.customOverall} custom OVR` : player.rating ? `${player.rating}/10 rating` : "Not rated"}</span><span>{player.active ? "Active" : "Inactive"}</span></div>
     {children && <div className="player-card__actions">{children}</div>}
@@ -100,7 +110,7 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
   const [editingId, setEditingId] = useState("");
   const [uploading, setUploading] = useState(false);
   const [formError, setFormError] = useState("");
-  const [draft, setDraft] = useState({ name: "", rating: 0, customOverall: "", role: "All-rounder" as CricketPlayer["role"], batting: "Right hand" as CricketPlayer["batting"], bowling: "Right-arm medium", image: "", flag: "PK", cardStyle: "classic" as CricketCardStyle });
+  const [draft, setDraft] = useState({ name: "", rating: 0, customOverall: "", role: "All-rounder" as CricketPlayer["role"], batting: "Right hand" as CricketPlayer["batting"], bowling: "Right-arm medium", image: "", flag: "PK", cardStyle: "electric" as CricketCardStyle });
   const activePlayers = useMemo(() => value.players.filter((item) => item.active), [value.players]);
   const player = (id: string) => value.players.find((item) => item.id === id);
   const update = onChange;
@@ -113,7 +123,7 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
 
   const resetDraft = () => {
     setEditingId("");
-    setDraft({ name: "", rating: 0, customOverall: "", role: "All-rounder", batting: "Right hand", bowling: "Right-arm medium", image: "", flag: "PK", cardStyle: "classic" });
+    setDraft({ name: "", rating: 0, customOverall: "", role: "All-rounder", batting: "Right hand", bowling: "Right-arm medium", image: "", flag: "PK", cardStyle: "electric" });
     setFormError("");
   };
 
@@ -292,7 +302,7 @@ export default function CricketWorkspace({ value, unlocked, onChange, uploadPlay
       <div className="row2"><div><label>Primary role</label><select value={draft.role} onChange={(event) => setDraft((current) => ({ ...current, role: event.target.value as CricketPlayer["role"] }))}>{CRICKET_ROLES.map((role) => <option key={role}>{role}</option>)}</select></div><div><label>Batting</label><select value={draft.batting} onChange={(event) => setDraft((current) => ({ ...current, batting: event.target.value as CricketPlayer["batting"] }))}><option>Right hand</option><option>Left hand</option></select></div></div>
       <label>Bowling style</label><input value={draft.bowling} onChange={(event) => setDraft((current) => ({ ...current, bowling: event.target.value }))} placeholder="Right-arm fast, left-arm spin…" />
       <label>Player photo</label><div className="photo-field">{draft.image ? <img src={draft.image} alt="Player preview" /> : <span className="mini-silhouette"><span /></span>}<label className="b line photo-button">{uploading ? "Uploading…" : "Upload photo"}<input type="file" accept="image/*" disabled={uploading} onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setUploading(true); setFormError(""); try { const image = await uploadPlayerImage(file); setDraft((current) => ({ ...current, image })); } catch (error) { setFormError(error instanceof Error ? error.message : "Upload failed."); } finally { setUploading(false); event.target.value = ""; } }} /></label>{draft.image && <button className="b line" type="button" onClick={() => setDraft((current) => ({ ...current, image: "" }))}>Remove</button>}</div>
-      <label>Card design</label><div className="design-picker is-small">{CRICKET_CARD_STYLES.map((style) => <button type="button" key={style} className={draft.cardStyle === style ? "on" : ""} onClick={() => setDraft((current) => ({ ...current, cardStyle: style }))}><img src={CARD_DESIGNS[style].frame} alt="" /><span>{CARD_DESIGNS[style].name}</span></button>)}</div>
+      <label>Card design</label><div className="design-picker cricket-design-picker">{CRICKET_CARD_STYLES.map((style) => <button type="button" key={style} className={draft.cardStyle === style ? "on" : ""} onClick={() => setDraft((current) => ({ ...current, cardStyle: style }))}><i className={`cricket-design-swatch cricket-card-${style}`} aria-hidden="true"><b>90</b><span>CR</span></i><span>{CARD_DESIGNS[style].name}</span></button>)}</div>
       {formError && <p className="access-error" role="alert">{formError}</p>}
       <div className="button-row"><button className="b pri" type="button" disabled={uploading} onClick={savePlayer}>{editingId ? "Save player" : "Add player"}</button>{editingId && <button className="b line" type="button" onClick={resetDraft}>Cancel</button>}</div>
     </section>}
