@@ -15,7 +15,7 @@ A mobile-first Next.js squad manager with shared football and cricket modes, pla
 - Automatic or manually selected player of the match
 - Full app state saved to Supabase, with local storage as an offline fallback
 - Admin-only global Football/Cricket switch synchronized to every viewer with Supabase Realtime
-- Separate cricket player cards whose batting, bowling, fielding, speed, power, and technique ratings are calculated from OVR, role, batting order, and bowling style
+- Separate cricket player cards with batting, bowling, fielding, speed, power, and technique ratings
 - Cricket-aware team balancing by OVR, role distribution, wicketkeeping, and bowling coverage
 - Scheduled or immediate cricket matches with overs, legal balls, wickets, extras, innings, targets, chase results, undo, and ball-by-ball commentary
 
@@ -30,7 +30,7 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 
 For a new project, run `supabase/schema.sql` first. Then run `supabase/rich-player-migration.sql` and `supabase/add-cricket-mode.sql`. For an existing project that already has rich player data, run only `supabase/add-cricket-mode.sql` for this update.
 
-The migration stores every football card field directly in `players`: stable player ID, name, 0–10 rating, speciality, card style, position, flag, photo URL, availability, balanced-team assignment, match-squad/captain state, OVR, and PAC/SHO/PAS/DRI/DEF/PHY. Scorers, assists, and minutes are stored in `match_events`. Cricket players are stored separately in `cricket_players`, including role, batting order, batting hand, bowling style, photo, card design, availability, OVR, and the automatically calculated BAT/BWL/FLD/SPD/PWR/TEC attributes. Cricket teams, innings, deliveries, commentary, and the shared sport mode remain in `squad_settings.app_state`; `sport_mode` mirrors the active mode for easy SQL inspection.
+The migration stores every football card field directly in `players`: stable player ID, name, 0–10 rating, speciality, card style, position, flag, photo URL, availability, balanced-team assignment, match-squad/captain state, OVR, and PAC/SHO/PAS/DRI/DEF/PHY. Scorers, assists, and minutes are stored in `match_events`. Cricket players are stored separately in `cricket_players`, including role, batting hand, bowling style, photo, card design, availability, OVR, and BAT/BWL/FLD/SPD/PWR/TEC attributes. Cricket teams, innings, deliveries, commentary, and the shared sport mode remain in `squad_settings.app_state`; `sport_mode` mirrors the active mode for easy SQL inspection.
 
 After running the migration, check all rich tables and Storage write/delete access with:
 
