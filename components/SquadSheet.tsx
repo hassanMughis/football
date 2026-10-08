@@ -66,6 +66,7 @@ type MainTab = "match" | "team" | "players";
 type SportMode = "football" | "cricket";
 type MatchTab = "timeline" | "lineups" | "stats" | "history" | "edit";
 type HistoryDetailTab = "timeline" | "lineups" | "stats";
+type TeamRosterAction = "captain" | "bench" | "move";
 type CardStyleId = typeof CARD_STYLES[number]["id"];
 type Player = { id: string; name: string; rating: number; spec: string; skills?: string[]; customOverall?: number; image?: string; cardStyle?: CardStyleId; position?: string; flag?: string; on?: boolean };
 type Goal = { s: string; a: string; m: number | null; team?: 1 | 2; kind?: "goal" | "penalty"; message?: number };
@@ -1004,6 +1005,8 @@ export default function SquadSheet() {
   const [formationPlayerId, setFormationPlayerId] = useState("");
   const [draggedFormationId, setDraggedFormationId] = useState("");
   const [teamFlagUploading, setTeamFlagUploading] = useState<"" | "team1" | "team2">("");
+  const [openTeamMenu, setOpenTeamMenu] = useState<"" | "team1" | "team2">("");
+  const [teamRosterAction, setTeamRosterAction] = useState<{ team: "team1" | "team2"; action: TeamRosterAction } | null>(null);
   const [editId, setEditId] = useState("");
   const [error, setError] = useState("");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
@@ -1264,12 +1267,12 @@ export default function SquadSheet() {
     </article>;
   }
 
-  function RosterRow({ item, captain = false, lineupPosition, flagOverride, flagLabel, children, rowKey }: { item: Player; captain?: boolean; lineupPosition?: string; flagOverride?: string | null; flagLabel?: string; children?: React.ReactNode; rowKey?: React.Key }) {
+  function RosterRow({ item, captain = false, lineupPosition, flagOverride, flagLabel, children, rowKey, onPlayerClick, selecting = false }: { item: Player; captain?: boolean; lineupPosition?: string; flagOverride?: string | null; flagLabel?: string; children?: React.ReactNode; rowKey?: React.Key; onPlayerClick?: () => void; selecting?: boolean }) {
     const open = openRosterCardId === item.id;
     const currentOverall = positionOverall(item, lineupPosition);
-    return <div className={`roster-entry${open ? " is-open" : ""}`} key={rowKey}>
+    return <div className={`roster-entry${open ? " is-open" : ""}${selecting ? " is-selecting" : ""}`} key={rowKey}>
       <div className="roster-row">
-        <button className="roster-player-button" onClick={() => setOpenRosterCardId(open ? "" : item.id)} aria-expanded={open}>
+        <button className="roster-player-button" onClick={() => onPlayerClick ? onPlayerClick() : setOpenRosterCardId(open ? "" : item.id)} aria-expanded={onPlayerClick ? undefined : open}>
           <span className="roster-avatar">{item.image ? <img src={item.image} alt="" /> : initials(item.name)}</span>
           <span className="roster-copy"><strong>{item.name}{captain && <span className="cp"> (C)</span>}</strong><small>{lineupPosition || defaultPosition(item)} · {currentOverall ?? "–"} OVR · {specialityLabel(item)}</small></span>
           <span className="roster-chevron" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
@@ -1571,7 +1574,8 @@ export default function SquadSheet() {
     const team1Average = saved ? averageTeamOverall(saved.team1.ids) : null;
     const team2Average = saved ? averageTeamOverall(saved.team2.ids) : null;
     const averageGap = team1Average !== null && team2Average !== null ? Math.round(Math.abs(team1Average - team2Average) * 10) / 10 : null;
-    const teamsUnbalanced = unassigned.length === 0 && averageGap !== null && averageGap >= 3;
+    const balanceReady = unassigned.length === 0 && averageGap !== null && team1Average !== null && team2Average !== null;
+    const teamsUnbalanced = balanceReady && averageGap >= 2;
     const strongerTeamName = saved && team1Average !== null && team2Average !== null
       ? team1Average >= team2Average ? saved.team1.name || "Team 1" : saved.team2.name || "Team 2"
       : "";
@@ -1653,6 +1657,12 @@ export default function SquadSheet() {
       updateTeam(team, { substitutes: isSubstitute ? substitutes.filter((playerId) => playerId !== id) : [...substitutes, id] });
     };
 
+    const chooseTeamAction = (team: "team1" | "team2", action: TeamRosterAction) => {
+      setOpenRosterCardId("");
+      setOpenTeamMenu("");
+      setTeamRosterAction({ team, action });
+    };
+
     const assignPlayer = (id: string, destination: "team1" | "team2") => setState((current) => {
       if (!current.balancedTeams) return current;
       const source = destination === "team1" ? "team2" : "team1";
@@ -1670,6 +1680,19 @@ export default function SquadSheet() {
         },
       };
     });
+
+    const applyTeamAction = (team: "team1" | "team2", id: string) => {
+      if (!teamRosterAction || teamRosterAction.team !== team) return;
+      const selected = saved?.[team];
+      const isSubstitute = Boolean(selected?.substitutes?.includes(id));
+      if (teamRosterAction.action === "captain" && isSubstitute) { window.alert("Choose a starting player as captain."); return; }
+      if (teamRosterAction.action === "bench" && selected?.captain === id && !isSubstitute) { window.alert("Choose another captain before moving this player to the bench."); return; }
+      if (teamRosterAction.action === "move" && selected?.captain === id) { window.alert("Choose another captain before moving this player to the other team."); return; }
+      if (teamRosterAction.action === "captain") changeCaptain(team, id);
+      if (teamRosterAction.action === "bench") toggleSubstitute(team, id);
+      if (teamRosterAction.action === "move") assignPlayer(id, team === "team1" ? "team2" : "team1");
+      setTeamRosterAction(null);
+    };
 
     const updateLineupPosition = (team: "team1" | "team2", id: string, position: string) => setState((current) => {
       if (!current.balancedTeams || !POSITIONS.includes(position as typeof POSITIONS[number])) return current;
@@ -1724,13 +1747,15 @@ export default function SquadSheet() {
       const roster = sortPlayers(team.ids.map(player).filter((item): item is Player => Boolean(item)));
       const substitutes = team.substitutes || [];
       const starterIds = team.ids.filter((id) => !substitutes.includes(id));
-      const rated = roster.map(numericBalanceVector).filter((value): value is BalanceVector => value !== null);
-      const average = rated.length ? Math.round(rated.reduce((sum, values) => sum + values[0], 0) / rated.length * 10) / 10 : null;
+      const average = key === "team1" ? team1Average : team2Average;
+      const activeAction = teamRosterAction?.team === key ? teamRosterAction.action : null;
+      const actionPrompt = activeAction === "captain" ? "Choose the new captain" : activeAction === "bench" ? "Choose a player to move to or from the bench" : activeAction === "move" ? `Choose a player to move to ${saved[other].name || `Team ${number === 1 ? 2 : 1}`}` : "";
       return <div className="card balanced-team-card">
-        {unlocked ? <div className="team-identity-fields"><div><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><label htmlFor={`team-flag-${number}`}>Team flag</label><div className="team-flag-field"><TeamMark name={team.name} flag={team.flag} className="team-flag-preview" /><div className="team-flag-actions"><label className="b line sm photo-button">{teamFlagUploading === key ? "Uploading…" : team.flag ? "Replace PNG" : "Upload PNG"}<input id={`team-flag-${number}`} type="file" accept="image/png,.png" disabled={Boolean(teamFlagUploading)} onChange={(event) => { const file = event.target.files?.[0]; void changeTeamFlag(key, file); event.target.value = ""; }} /></label>{team.flag && <button type="button" className="b line sm" disabled={Boolean(teamFlagUploading)} onClick={() => updateTeam(key, { flag: "" })}>Remove</button>}</div></div></div></div> : <h3 className="public-team-name"><TeamMark name={team.name} flag={team.flag} className="team-name-flag" />{team.name}</h3>}
+        {unlocked ? <div className="team-identity-fields"><div><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><label htmlFor={`team-flag-${number}`}>Team flag</label><div className="team-flag-field"><TeamMark name={team.name} flag={team.flag} className="team-flag-preview" /><div className="team-flag-actions"><div className="team-action-menu"><button type="button" className="b line sm team-menu-trigger" aria-label={`Open ${team.name || `Team ${number}`} actions`} aria-expanded={openTeamMenu === key} onClick={() => setOpenTeamMenu((current) => current === key ? "" : key)}>⋯</button>{openTeamMenu === key && <div className="team-action-menu__list"><button type="button" onClick={() => chooseTeamAction(key, "captain")}>Change captain</button><button type="button" disabled={Boolean(state.match.startedAt)} onClick={() => chooseTeamAction(key, "bench")}>Starter / bench</button><button type="button" disabled={unassigned.length > 0 || Boolean(state.match.startedAt)} onClick={() => chooseTeamAction(key, "move")}>Move to {saved[other].name || `Team ${number === 1 ? 2 : 1}`}</button></div>}</div><label className="b line sm photo-button">{teamFlagUploading === key ? "Uploading…" : team.flag ? "Replace PNG" : "Upload PNG"}<input id={`team-flag-${number}`} type="file" accept="image/png,.png" disabled={Boolean(teamFlagUploading)} onChange={(event) => { const file = event.target.files?.[0]; void changeTeamFlag(key, file); event.target.value = ""; }} /></label>{team.flag && <button type="button" className="b line sm" disabled={Boolean(teamFlagUploading)} onClick={() => updateTeam(key, { flag: "" })}>Remove</button>}</div></div></div></div> : <h3 className="public-team-name"><TeamMark name={team.name} flag={team.flag} className="team-name-flag" />{team.name}</h3>}
+        {activeAction && <div className="team-action-prompt"><span>{actionPrompt}, then click their name.</span><button type="button" onClick={() => setTeamRosterAction(null)}>Cancel</button></div>}
         <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{average !== null ? ` · Avg ${average} OVR` : ""}</p>
         <p className="formation-label">Formation: {formationLabel(Object.fromEntries(Object.entries(team.positions).filter(([id]) => starterIds.includes(id))))}{substitutes.length ? ` · ${substitutes.length} substitute${substitutes.length === 1 ? "" : "s"}` : ""}</p>
-        <div className="roster-list">{roster.map((item) => { const isSubstitute = substitutes.includes(item.id); return RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), flagOverride: team.flag || null, flagLabel: team.name, rowKey: item.id, children: unlocked ? <><span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span>{team.captain !== item.id && !isSubstitute && <button className="b line sm" onClick={() => changeCaptain(key, item.id)}>Make captain</button>}<select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select>{!state.match.startedAt && <button className="b line sm" onClick={() => toggleSubstitute(key, item.id)}>{isSubstitute ? "Make starter" : "Move to bench"}</button>}{unassigned.length === 0 && team.captain !== item.id && !state.match.startedAt && <button className="b line sm" onClick={() => assignPlayer(item.id, other)}>Move</button>}</> : <span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span> }); })}</div>
+        <div className="roster-list">{roster.map((item) => { const isSubstitute = substitutes.includes(item.id); return RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), flagOverride: team.flag || null, flagLabel: team.name, rowKey: item.id, selecting: Boolean(activeAction), onPlayerClick: activeAction ? () => applyTeamAction(key, item.id) : undefined, children: unlocked ? <><span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></> : <span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span> }); })}</div>
       </div>;
     };
 
@@ -1743,7 +1768,7 @@ export default function SquadSheet() {
       {saved && <div className="sec top-rule"><h2>{unlocked ? "Edit teams and positions" : "Teams"}</h2><p className="note">{unlocked ? "After OVR-balanced teams are chosen, positions maximize lineup OVR while covering goalkeeper, defence and attack. Captains stay on their selected side." : "View the current squads, formations and player cards."}</p>
         {unassigned.length > 0 && <div className="draft-arena" aria-live="polite"><div className={`draft-captain draft-captain-left${draftTeam === "team1" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team1.captain)?.name || saved.team1.name}</strong><small>{draftTeam === "team1" ? "Picking now" : "Waiting"}</small></div><div className="draft-ball">⚽</div><div className={`draft-captain draft-captain-right${draftTeam === "team2" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team2.captain)?.name || saved.team2.name}</strong><small>{draftTeam === "team2" ? "Picking now" : "Waiting"}</small></div><p><strong>{draftCaptain?.name || saved[draftTeam].name}&apos;s turn</strong> · choose one player</p></div>}
         <div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>
-        {teamsUnbalanced && <div className="team-balance-warning" role="alert"><strong>Teams are not balanced</strong><span>{strongerTeamName} is {averageGap} average OVR stronger. Shuffle again or move players between the teams.</span></div>}
+        {balanceReady && <div className={`team-balance-status${teamsUnbalanced ? " is-warning" : " is-balanced"}`} role={teamsUnbalanced ? "alert" : "status"}><strong>{teamsUnbalanced ? "Teams are not balanced" : "Teams are balanced"}</strong><span>{saved.team1.name || "Team 1"}: {team1Average?.toFixed(1)} OVR · {saved.team2.name || "Team 2"}: {team2Average?.toFixed(1)} OVR · Difference: {averageGap?.toFixed(1)} OVR.</span>{teamsUnbalanced && <span>{strongerTeamName} is stronger. Shuffle again or move players between the teams.</span>}<details className="team-balance-info"><summary aria-label="Show team balance rule"><span aria-hidden="true">ⓘ</span> Balance rule</summary><p>A “Teams are not balanced” warning appears when the average OVR differs by 2.0 or more.</p></details></div>}
         {FormationBoard(true)}
         {unassigned.length > 0 && <div className="unassigned-card"><h2>Players waiting to be picked · {unassigned.length}</h2><p className="note">Captains take turns. Only the captain whose hand is highlighted can make the next pick.</p><div className="roster-list">{unassigned.map((item) => RosterRow({ item, rowKey: item.id, children: unlocked ? <button className="b sm pri" onClick={() => assignPlayer(item.id, draftTeam)}>Pick for {draftCaptain?.name || saved[draftTeam].name}</button> : undefined }))}</div></div>}
         {unlocked && !state.team?.ids.length && <div className="match-host-card"><h3>Host this match</h3><p className="note">Start it today, or choose a kickoff time. The 90-minute clock only begins when an admin presses Start match.</p><div className="button-row"><button className="b pri" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length} onClick={() => hostMatch()}>Host now</button></div><label htmlFor="match-kickoff">Schedule kickoff</label><div className="schedule-row"><input id="match-kickoff" type="datetime-local" value={scheduleInput} onChange={(event) => setScheduleInput(event.target.value)} /><button className="b line" disabled={unassigned.length > 0 || !saved.team1.ids.length || !saved.team2.ids.length || !scheduleInput} onClick={scheduleMatch}>Schedule match</button></div></div>}
