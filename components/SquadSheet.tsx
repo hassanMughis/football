@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import CricketWorkspace from "@/components/CricketWorkspace";
+import { CricketState, CricketTab, initialCricketState, restoreCricketState } from "@/lib/cricket";
 
 const SPECIALITIES = ["Passing", "Scoring", "Shooting", "Dribbling", "Teamwork", "Goalkeeping", "Defending", "Pace", "Strength", "Heading"] as const;
 const SKILL_BADGES: Record<string, string> = {
@@ -61,6 +63,7 @@ const CARD_STYLES = [
 const SEED = ["Abdul Rafay", "Faiq Ali Khan", "Hamza Yildirim", "Hassan", "Ali", "Atif Rajpoot", "Saad Naseer", "Tariq Azeez", "Zian", "Wahid Bux", "Zubair", "Hasnain", "Waris", "Muhammad Saad"];
 
 type MainTab = "match" | "team" | "players";
+type SportMode = "football" | "cricket";
 type MatchTab = "timeline" | "lineups" | "stats" | "history" | "edit";
 type HistoryDetailTab = "timeline" | "lineups" | "stats";
 type CardStyleId = typeof CARD_STYLES[number]["id"];
@@ -109,6 +112,8 @@ type MatchHistoryEntry = {
   motm: string;
 };
 type AppState = {
+  sportMode: SportMode;
+  cricket: CricketState;
   players: Player[];
   want: number;
   team: Team | null;
@@ -225,6 +230,8 @@ const flagCountryCode = (value?: string) => {
 };
 
 const initialState = (): AppState => ({
+  sportMode: "football",
+  cricket: initialCricketState(),
   players: SEED.map((name, i) => ({ id: `s${i}`, name, rating: 0, spec: "", cardStyle: "classic" })),
   want: 0,
   team: null,
@@ -238,6 +245,8 @@ const initialState = (): AppState => ({
 });
 
 const sharedStateFingerprint = (value: AppState) => JSON.stringify({
+  sportMode: value.sportMode,
+  cricket: value.cricket,
   players: value.players,
   want: value.want,
   team: value.team,
@@ -381,6 +390,8 @@ const restoreState = (value: unknown): AppState => {
   return {
     ...base,
     ...parsed,
+    sportMode: parsed.sportMode === "cricket" ? "cricket" : "football",
+    cricket: restoreCricketState(parsed.cricket),
     players,
     want: Number.isFinite(Number(parsed.want)) ? Math.max(0, Number(parsed.want)) : 0,
     team: savedTeam?.ids.length ? { ...savedTeam, captain: playerIds.has(savedTeam.captain) ? savedTeam.captain : savedTeam.ids[0] } : null,
@@ -1975,12 +1986,26 @@ export default function SquadSheet() {
     setDraggedFormationId("");
     setUnlocked(false);
   };
+  const switchSportMode = () => {
+    if (!unlocked) return;
+    setState((current) => ({ ...current, sportMode: current.sportMode === "cricket" ? "football" : "cricket" }));
+  };
   if (!accessChecked || !hydrated.current) return <div className="app access-screen"><div className="access-card"><img src="/badges/squad-sheet-fc.png" alt="Squad Sheet FC" /><p className="access-kicker">SQUAD SHEET</p><h1>Loading…</h1></div></div>;
 
+  const cricketMode = state.sportMode === "cricket";
   const syncText = !unlocked
     ? syncStatus === "loading" ? "Loading public view…" : syncStatus === "reconnecting" ? "View only · Reconnecting…" : syncStatus === "offline" ? "View only · Supabase offline" : "View only · Live data"
     : syncStatus === "loading" ? "Loading Supabase…" : syncStatus === "saving" ? "Saving…" : syncStatus === "saved" ? "Saved to Supabase" : syncStatus === "reconnecting" ? "Reconnecting to Supabase…" : "Saved locally · Supabase offline";
-  return <div className={`app${unlocked ? " is-admin" : " is-view-only"}`}><nav className="tabs" aria-label="Main navigation">{(["match", "team", "players"] as MainTab[]).map((tab) => <button key={tab} onClick={() => setTab(tab)} className={state.tab === tab ? "on" : ""}>{tab}</button>)}</nav><div className={`sync-status is-${syncStatus}`} role="status" aria-live="polite"><span />{syncText}<button type="button" onClick={() => unlocked ? void lock() : setShowAdminLogin(true)}>{unlocked ? "Exit admin" : "Admin login"}</button></div><main>{state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : MatchView()}</main>
+  return <div className={`app sport-${state.sportMode}${unlocked ? " is-admin" : " is-view-only"}`}>
+    {cricketMode
+      ? <nav className="tabs cricket-tabs" aria-label="Cricket navigation">{(["match", "team", "players"] as CricketTab[]).map((tab) => <button type="button" key={tab} className={state.cricket.tab === tab ? "on" : ""} onClick={() => setState((current) => ({ ...current, cricket: { ...current.cricket, tab } }))}>{tab}</button>)}</nav>
+      : <nav className="tabs" aria-label="Main navigation">{(["match", "team", "players"] as MainTab[]).map((tab) => <button key={tab} onClick={() => setTab(tab)} className={state.tab === tab ? "on" : ""}>{tab}</button>)}</nav>}
+    <div className={`sync-status is-${syncStatus}`}>
+      {unlocked && <button className="sport-switch" type="button" onClick={switchSportMode}>{cricketMode ? "Switch to football" : "Switch to cricket"}</button>}
+      <span className="sync-message" role="status" aria-live="polite"><i className="sync-dot" />{syncText}</span>
+      <button className="admin-session-button" type="button" onClick={() => unlocked ? void lock() : setShowAdminLogin(true)}>{unlocked ? "Exit admin" : "Admin login"}</button>
+    </div>
+    <main>{cricketMode ? <CricketWorkspace value={state.cricket} unlocked={unlocked} uploadPlayerImage={preparePlayerImage} onChange={(updater) => setState((current) => ({ ...current, cricket: updater(current.cricket) }))} /> : state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : MatchView()}</main>
     {showAdminLogin && !unlocked && <div className="admin-login-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAdminLogin(false); }}><form className="access-card admin-login-card" onSubmit={unlock} role="dialog" aria-modal="true" aria-labelledby="admin-login-title">
       <button className="admin-login-close" type="button" onClick={() => setShowAdminLogin(false)} aria-label="Close admin login">×</button>
       <img src="/badges/squad-sheet-fc.png" alt="" />

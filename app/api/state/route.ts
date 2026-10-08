@@ -1,5 +1,6 @@
 import { getSupabaseConfig, supabaseRest } from "@/lib/supabase-rest";
 import { isAdmin } from "@/lib/admin-auth";
+import { restoreCricketState } from "@/lib/cricket";
 
 export const dynamic = "force-dynamic";
 
@@ -139,7 +140,9 @@ function validateAndEnrichState(value: unknown) {
     ids.add(id);
     return { ...normalized, cardStats: generatedStats(normalized) };
   });
-  return { ...value, players };
+  const sportMode = value.sportMode === "cricket" ? "cricket" : "football";
+  const cricket = restoreCricketState(value.cricket);
+  return { ...value, sportMode, cricket, players };
 }
 
 async function readStorageState() {
