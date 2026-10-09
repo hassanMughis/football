@@ -301,6 +301,80 @@ table { width:100%; border-collapse:collapse; }th,td { padding:10px 4px; text-al
 .balanced-team-grid { align-items:start; margin-top:12px; }.balanced-team-card { margin:0; padding:12px; min-width:0; }.balanced-team-card label:first-child { margin-top:0; }.balanced-team-card .rowp { gap:5px; }.balanced-team-card .chip { font-size:11px; }.balanced-use-button { width:100%; margin-top:10px; }
 .team-balance-status { display:grid; gap:4px; margin:12px 0; padding:11px 13px; border:1px solid var(--line); border-radius:10px; }.team-balance-status.is-warning { border-color:color-mix(in srgb,#fbbc04 58%,var(--line)); background:color-mix(in srgb,#fbbc04 10%,var(--s1)); }.team-balance-status.is-balanced { border-color:color-mix(in srgb,#35c66c 58%,var(--line)); background:color-mix(in srgb,#35c66c 9%,var(--s1)); }.team-balance-status strong { font-size:13px; }.team-balance-status.is-warning > strong { color:#fdd663; }.team-balance-status.is-balanced > strong { color:#7ee6a5; }.team-balance-status > span { color:var(--mu); font-size:12px; line-height:1.45; }
 .team-balance-info { margin-top:3px; color:var(--mu); font-size:11px; }.team-balance-info summary { width:max-content; color:var(--tx); cursor:pointer; list-style:none; }.team-balance-info summary::-webkit-details-marker { display:none; }.team-balance-info summary span { margin-right:4px; color:var(--acc); font-size:13px; }.team-balance-info p { margin:7px 0 0; padding-top:7px; border-top:1px solid color-mix(in srgb,var(--line) 70%,transparent); line-height:1.45; }
+.payment-intro { padding:24px 20px; background:linear-gradient(135deg,color-mix(in srgb,var(--acc) 10%,var(--s1)),var(--s1) 58%); }
+.payment-kicker { color:var(--acc); font-size:10px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
+.payment-intro h1 { margin:5px 0 4px; font-size:25px; line-height:1.1; }
+.payment-intro p { max-width:680px; margin:0; color:var(--mu); font-size:12px; line-height:1.55; }
+.payment-summary-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:12px; }
+.payment-summary-grid article { display:grid; gap:4px; min-width:0; padding:14px; border:1px solid var(--line); border-radius:11px; background:var(--s1); }
+.payment-summary-grid article.has-overdue { border-color:color-mix(in srgb,#ff625c 62%,var(--line)); background:color-mix(in srgb,#ff625c 8%,var(--s1)); }
+.payment-summary-grid span { color:var(--mu); font-size:10px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
+.payment-summary-grid strong { overflow:hidden; font-size:20px; line-height:1.15; text-overflow:ellipsis; }
+.payment-summary-grid article.has-overdue strong { color:#ff817c; }
+.payment-summary-grid small { color:var(--mu); font-size:10px; }
+.payment-overdue-panel { border-color:color-mix(in srgb,#ff625c 62%,var(--line)); background:color-mix(in srgb,#ff625c 7%,var(--s1)); }
+.payment-overdue-panel h2,.payment-import h2 { margin:0 0 4px; font-size:16px; }
+.payment-overdue-panel > div { margin-top:11px; border-top:1px solid color-mix(in srgb,#ff625c 30%,var(--line)); }
+.payment-overdue-panel > div > div { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 2px; border-bottom:1px solid color-mix(in srgb,#ff625c 22%,var(--line)); }
+.payment-overdue-panel > div > div:last-child { border-bottom:0; }
+.payment-overdue-panel span { display:grid; gap:2px; }
+.payment-overdue-panel strong,.payment-overdue-panel b { color:#ff817c; font-size:13px; }
+.payment-overdue-panel small { color:var(--mu); font-size:10px; }
+.payment-import { display:grid; gap:9px; }
+.payment-import > div { display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:8px; border-top:1px solid var(--line); color:var(--mu); font-size:11px; }
+.payment-import > .b { justify-self:start; }
+.payment-records { padding:0 12px 22px; }
+.payment-card { margin-bottom:12px; overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--s1); }
+.payment-card.has-overdue { border-color:color-mix(in srgb,#ff625c 65%,var(--line)); }
+.payment-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:15px 16px 12px; border-bottom:1px solid var(--line); }
+.payment-card-head > div { min-width:0; }
+.payment-card-head span { color:var(--acc); font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
+.payment-card-head h2 { overflow:hidden; margin:3px 0; font-size:16px; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; }
+.payment-card-head h2 i { margin:0 4px; color:var(--mu); font-size:10px; font-style:normal; font-weight:500; text-transform:uppercase; }
+.payment-card-head p { margin:0; color:var(--mu); font-size:10px; }
+.payment-card-head-actions { display:flex; flex:0 0 auto; align-items:center; gap:7px; }
+.payment-card-head-actions > strong { padding:5px 8px; border:1px solid var(--line); border-radius:999px; color:var(--mu); font-size:9px; white-space:nowrap; }
+.payment-card-head-actions > strong.is-paid { border-color:color-mix(in srgb,#35c66c 52%,var(--line)); background:color-mix(in srgb,#35c66c 11%,transparent); color:#7ee6a5; }
+.payment-card-head-actions > strong.is-overdue { border-color:color-mix(in srgb,#ff625c 55%,var(--line)); background:color-mix(in srgb,#ff625c 10%,transparent); color:#ff817c; }
+.payment-totals { display:grid; grid-template-columns:1.4fr repeat(3,1fr); gap:0; border-bottom:1px solid var(--line); }
+.payment-totals > div { display:flex; min-width:0; min-height:70px; flex-direction:column; justify-content:center; padding:11px 14px; border-right:1px solid var(--line); }
+.payment-totals > div:last-child { border-right:0; }
+.payment-totals label,.payment-totals small { margin:0 0 5px; color:var(--mu); font-size:9px; font-weight:600; letter-spacing:.03em; }
+.payment-totals strong { overflow:hidden; font-size:14px; text-overflow:ellipsis; white-space:nowrap; }
+.payment-totals input { width:100%; margin:0; padding:8px 9px; font-size:13px; }
+.payment-bulk-actions { display:flex; justify-content:flex-end; gap:6px; padding:10px 14px 0; }
+.payment-player-list { padding:7px 14px 12px; }
+.payment-player { display:grid; grid-template-columns:36px minmax(0,1fr) auto auto; align-items:center; gap:10px; min-width:0; padding:9px 4px; border-bottom:1px solid var(--line); }
+.payment-player:last-child { border-bottom:0; }
+.payment-player.is-overdue { margin:3px 0; padding-inline:8px; border:1px solid color-mix(in srgb,#ff625c 38%,var(--line)); border-radius:9px; background:color-mix(in srgb,#ff625c 8%,transparent); }
+.payment-avatar { display:grid; width:36px; height:36px; place-items:center; border:1px solid var(--line); border-radius:50%; background:linear-gradient(145deg,#687078,#30343a); color:#fff; font-size:10px; font-weight:800; }
+.payment-player > div { display:grid; min-width:0; gap:2px; }
+.payment-player > div strong { overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.payment-player > div small { color:var(--mu); font-size:9px; }
+.payment-player > b { color:var(--tx); font-size:12px; white-space:nowrap; }
+.payment-player.is-paid > div small { color:#7ee6a5; }
+.payment-player.is-overdue > div strong,.payment-player.is-overdue > div small,.payment-player.is-overdue > b { color:#ff817c; }
+.payment-manual { padding:0; overflow:hidden; }
+.payment-manual > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:15px 16px; cursor:pointer; list-style:none; }
+.payment-manual > summary::-webkit-details-marker { display:none; }
+.payment-manual > summary > span { display:grid; gap:2px; }
+.payment-manual > summary strong { font-size:15px; }
+.payment-manual > summary small { color:var(--mu); font-size:10px; font-weight:400; }
+.payment-manual > summary > b { color:var(--acc); font-size:21px; font-weight:400; transition:transform .15s ease; }
+.payment-manual[open] > summary > b { transform:rotate(45deg); }
+.payment-manual form { padding:0 16px 16px; border-top:1px solid var(--line); }
+.payment-manual-fields { display:grid; grid-template-columns:1fr 1fr; gap:9px 12px; padding-top:12px; }
+.payment-manual-fields label { margin-top:0; }
+.payment-participant-picker { margin:14px 0; padding:10px; border:1px solid var(--line); border-radius:10px; }
+.payment-participant-picker legend { padding:0 6px; color:var(--tx); font-size:12px; font-weight:700; }
+.payment-participant-picker > .note { margin:0 0 9px; }
+.payment-participant-picker > div { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.payment-participant-picker label { display:grid; grid-template-columns:auto 28px minmax(0,1fr); align-items:center; gap:7px; min-width:0; margin:0; padding:7px; border:1px solid var(--line); border-radius:8px; background:var(--bg); cursor:pointer; }
+.payment-participant-picker label:has(input:checked) { border-color:color-mix(in srgb,var(--acc) 55%,var(--line)); background:color-mix(in srgb,var(--acc) 9%,var(--bg)); }
+.payment-participant-picker input { width:auto; margin:0; accent-color:var(--acc); }
+.payment-participant-picker .payment-avatar { width:28px; height:28px; font-size:8px; }
+.payment-participant-picker strong { overflow:hidden; font-size:11px; font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
+.payment-participant-picker small { grid-column:3; margin-top:-6px; color:var(--mu); font-size:8px; }
 @keyframes sync-pulse { to { opacity:.3; } }
 @keyframes draft-hand-pulse { to { transform:translateY(-5px) scale(1.08); } }
 .draft-captain-left.is-turn .draft-hand { animation-name:draft-left-hand-pulse; }
@@ -311,4 +385,6 @@ table { width:100%; border-collapse:collapse; }th,td { padding:10px 4px; text-al
 @media (max-width:350px) { .player-grid { grid-template-columns:1fr; } }
 @media (max-width:480px) { .substitution-players { grid-template-columns:1fr; }.incident-event-head { padding-inline:11px; }.goal-event-player { padding-inline:12px; }.formation-event-badges { right:-5px; }.match-event-editor .row2,.team-identity-fields,.history-team-stats { grid-template-columns:1fr; } }
 @media (max-width:640px) { .sync-status { flex-wrap:wrap; }.sync-status .sport-switch { order:3; width:100%; margin:2px 0 0; padding-block:6px; }.cricket-panel { padding:12px 10px 22px; }.cricket-hero { grid-template-columns:1fr; min-height:0; padding:24px 20px; }.cricket-emblem { width:180px; height:160px; justify-self:center; }.cricket-score-preview { grid-template-columns:1fr; text-align:center; }.cricket-score-preview > div:last-child { text-align:center; }.cricket-score-preview > span { grid-row:2; }.cricket-summary-grid,.cricket-team-grid,.cricket-player-selects { grid-template-columns:1fr; }.cricket-attribute-inputs { grid-template-columns:repeat(3,minmax(0,1fr)); }.cricket-run-buttons { grid-template-columns:repeat(4,minmax(0,1fr)); }.cricket-run-buttons .is-extra { min-height:42px; }.cricket-live-head { padding-top:20px; } }
+@media (max-width:640px) { .payment-summary-grid { grid-template-columns:1fr; }.payment-summary-grid article { grid-template-columns:1fr auto; align-items:center; }.payment-summary-grid article small { grid-column:1/-1; }.payment-totals { grid-template-columns:1fr 1fr; }.payment-totals > div:nth-child(2) { border-right:0; }.payment-totals > div:nth-child(-n+2) { border-bottom:1px solid var(--line); }.payment-card-head { align-items:stretch; flex-direction:column; }.payment-card-head-actions { justify-content:space-between; }.payment-player { grid-template-columns:36px minmax(0,1fr) auto; }.payment-player .b { grid-column:2/-1; justify-self:end; }.payment-import > div { align-items:flex-start; flex-direction:column; }.payment-manual-fields { grid-template-columns:1fr; }.payment-participant-picker > div { grid-template-columns:1fr 1fr; } }
+@media (max-width:400px) { .payment-participant-picker > div { grid-template-columns:1fr; } }
 @media (prefers-reduced-motion:no-preference) { .b,.tabs button { transition:background .15s; } }

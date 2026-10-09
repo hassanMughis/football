@@ -62,7 +62,7 @@ const CARD_STYLES = [
 ] as const;
 const SEED = ["Abdul Rafay", "Faiq Ali Khan", "Hamza Yildirim", "Hassan", "Ali", "Atif Rajpoot", "Saad Naseer", "Tariq Azeez", "Zian", "Wahid Bux", "Zubair", "Hasnain", "Waris", "Muhammad Saad"];
 
-type MainTab = "match" | "team" | "players";
+type MainTab = "match" | "team" | "players" | "payment";
 type SportMode = "football" | "cricket";
 type MatchTab = "timeline" | "lineups" | "stats" | "history" | "edit";
 type HistoryDetailTab = "timeline" | "lineups" | "stats";
@@ -84,6 +84,7 @@ type BalancedTeams = {
 };
 type MatchPauseReason = "" | "break" | "half-time" | "time";
 type Match = {
+  id?: string;
   opp: string;
   us: string;
   them: number;
@@ -112,6 +113,16 @@ type MatchHistoryEntry = {
   incidents?: MatchIncident[];
   motm: string;
 };
+type PaymentParticipant = { id: string; name: string; paidAt?: string };
+type MatchPayment = {
+  matchId: string;
+  createdAt: string;
+  matchDate: string;
+  team1Name: string;
+  team2Name: string;
+  totalExpense: number;
+  participants: PaymentParticipant[];
+};
 type AppState = {
   syncVersion?: number;
   sportMode: SportMode;
@@ -125,6 +136,7 @@ type AppState = {
   sub: MatchTab;
   match: Match;
   history: MatchHistoryEntry[];
+  payments: MatchPayment[];
   seeded: boolean;
   savedAt?: number;
 };
@@ -148,6 +160,15 @@ const newMatch = (previous?: Match): Match => ({
 
 const MATCH_DURATION_SECONDS = 90 * 60;
 const HALF_TIME_SECONDS = 45 * 60;
+const PAYMENT_OVERDUE_MS = 3 * 24 * 60 * 60 * 1000;
+const PAYMENT_CURRENCY = "PKR";
+const paymentAmount = (value: number) => `${PAYMENT_CURRENCY} ${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.max(0, value))}`;
+const paymentDueAt = (payment: MatchPayment) => Date.parse(payment.matchDate) + PAYMENT_OVERDUE_MS;
+const paymentIsOverdue = (payment: MatchPayment, participant: PaymentParticipant, now: number) => payment.totalExpense > 0 && !participant.paidAt && Number.isFinite(paymentDueAt(payment)) && now >= paymentDueAt(payment);
+const paymentParticipants = (ids: string[], players: Player[]) => {
+  const playerById = new Map(players.map((item) => [item.id, item]));
+  return [...new Set(ids)].map((id) => playerById.get(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name }));
+};
 const elapsedMatchSeconds = (match: Match, now = Date.now()) => Math.min(MATCH_DURATION_SECONDS, Math.max(0,
   Math.floor(match.elapsedSeconds || 0) + (match.timerStartedAt ? Math.max(0, Math.floor((now - match.timerStartedAt) / 1000)) : 0),
 ));
@@ -243,6 +264,7 @@ const initialState = (): AppState => ({
   sub: "timeline",
   match: newMatch(),
   history: [],
+  payments: [],
   seeded: true,
 });
 
@@ -256,6 +278,7 @@ const sharedStateFingerprint = (value: AppState) => JSON.stringify({
   pool: value.pool,
   match: value.match,
   history: value.history,
+  payments: value.payments,
   seeded: value.seeded,
 });
 
@@ -381,6 +404,7 @@ const restoreState = (value: unknown): AppState => {
   const normalizedMatch: Match = {
     ...base.match,
     ...parsedMatch,
+    id: typeof parsedMatch.id === "string" && parsedMatch.id.trim() ? parsedMatch.id : savedTeam?.ids.length ? `legacy-match-${Number(parsedMatch.startedAt) || Number(parsed.savedAt) || "current"}` : undefined,
     scheduledFor: typeof parsedMatch.scheduledFor === "string" && Number.isFinite(Date.parse(parsedMatch.scheduledFor)) ? parsedMatch.scheduledFor : undefined,
     startedAt: Number.isFinite(Number(parsedMatch.startedAt)) && Number(parsedMatch.startedAt) > 0 ? Number(parsedMatch.startedAt) : undefined,
     timerStartedAt: Number.isFinite(Number(parsedMatch.timerStartedAt)) && Number(parsedMatch.timerStartedAt) > 0 ? Number(parsedMatch.timerStartedAt) : undefined,
@@ -389,6 +413,36 @@ const restoreState = (value: unknown): AppState => {
     pauseReason: parsedMatch.pauseReason === "break" || parsedMatch.pauseReason === "half-time" || parsedMatch.pauseReason === "time" ? parsedMatch.pauseReason : "",
     incidents: Array.isArray(parsedMatch.incidents) ? parsedMatch.incidents : [],
   };
+  const restoredPayments = Array.isArray(parsed.payments) ? parsed.payments.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const payment = item as Partial<MatchPayment>;
+    if (typeof payment.matchId !== "string" || !payment.matchId.trim() || !Array.isArray(payment.participants)) return [];
+    const createdAt = typeof payment.createdAt === "string" && Number.isFinite(Date.parse(payment.createdAt)) ? payment.createdAt : new Date(0).toISOString();
+    const matchDate = typeof payment.matchDate === "string" && Number.isFinite(Date.parse(payment.matchDate)) ? payment.matchDate : createdAt;
+    const participantIds = new Set<string>();
+    const participants = payment.participants.flatMap((participant) => {
+      if (!participant || typeof participant !== "object") return [];
+      const savedParticipant = participant as Partial<PaymentParticipant>;
+      const id = String(savedParticipant.id || "").trim();
+      if (!id || participantIds.has(id)) return [];
+      participantIds.add(id);
+      return [{
+        id,
+        name: typeof savedParticipant.name === "string" && savedParticipant.name.trim() ? savedParticipant.name.trim() : players.find((player) => player.id === id)?.name || "Player",
+        paidAt: typeof savedParticipant.paidAt === "string" && Number.isFinite(Date.parse(savedParticipant.paidAt)) ? savedParticipant.paidAt : undefined,
+      } satisfies PaymentParticipant];
+    });
+    return [{
+      matchId: payment.matchId,
+      createdAt,
+      matchDate,
+      team1Name: typeof payment.team1Name === "string" && payment.team1Name.trim() ? payment.team1Name.trim() : "Team 1",
+      team2Name: typeof payment.team2Name === "string" && payment.team2Name.trim() ? payment.team2Name.trim() : "Team 2",
+      totalExpense: Math.max(0, Number(payment.totalExpense) || 0),
+      participants,
+    } satisfies MatchPayment];
+  }) : [];
+  const payments = [...new Map(restoredPayments.map((payment) => [payment.matchId, payment])).values()].slice(0, 100);
   return {
     ...base,
     ...parsed,
@@ -399,10 +453,11 @@ const restoreState = (value: unknown): AppState => {
     team: savedTeam?.ids.length ? { ...savedTeam, captain: playerIds.has(savedTeam.captain) ? savedTeam.captain : savedTeam.ids[0] } : null,
     balancedTeams: normalizedBalancedTeams,
     pool: Array.isArray(parsed.pool) ? parsed.pool.filter((item) => item && playerIds.has(String(item.id))).map((item) => players.find((player) => player.id === String(item.id))!).filter(Boolean) : null,
-    tab: parsed.tab === "team" || parsed.tab === "players" ? parsed.tab : "match",
+    tab: parsed.tab === "team" || parsed.tab === "players" || parsed.tab === "payment" ? parsed.tab : "match",
     sub: parsed.sub === "lineups" || parsed.sub === "stats" || parsed.sub === "history" || parsed.sub === "edit" ? parsed.sub : "timeline",
     match: normalizedMatch,
     history: Array.isArray(parsed.history) ? parsed.history.slice(0, 100) : [],
+    payments,
     syncVersion: Number(parsed.syncVersion) || undefined,
     savedAt: Number(parsed.savedAt) || undefined,
   };
@@ -1002,6 +1057,7 @@ export default function SquadSheet() {
   const [matchEventTeam, setMatchEventTeam] = useState<1 | 2>(1);
   const [scheduleInput, setScheduleInput] = useState("");
   const [clockNow, setClockNow] = useState(() => Date.now());
+  const [paymentNow, setPaymentNow] = useState(() => Date.now());
   const [openHistoryId, setOpenHistoryId] = useState("");
   const [historyDetailTab, setHistoryDetailTab] = useState<HistoryDetailTab>("timeline");
   const [openRosterCardId, setOpenRosterCardId] = useState("");
@@ -1142,6 +1198,14 @@ export default function SquadSheet() {
     const interval = window.setInterval(tick, 1000);
     return () => window.clearInterval(interval);
   }, [state.match.scheduledFor, state.match.st, state.match.startedAt, state.match.timerStartedAt]);
+
+  useEffect(() => {
+    if (state.sportMode !== "football" || state.tab !== "payment") return;
+    const tick = () => setPaymentNow(Date.now());
+    tick();
+    const interval = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(interval);
+  }, [state.sportMode, state.tab]);
 
   useEffect(() => {
     if (state.match.st !== "Live" || !state.match.timerStartedAt || elapsedMatchSeconds(state.match, clockNow) < MATCH_DURATION_SECONDS) return;
@@ -1786,14 +1850,23 @@ export default function SquadSheet() {
 
     const hostMatch = (scheduledFor?: string) => {
       if (!saved || unassigned.length) return;
-      setState((current) => ({
-        ...current,
-        tab: "match",
-        sub: "timeline",
-        team: { ids: saved.team1.ids, captain: saved.team1.captain },
-        pool: null,
-        match: { us: saved.team1.name || "Team 1", opp: saved.team2.name || "Team 2", them: 0, ev: [], incidents: [], motm: "", st: "Live", scheduledFor, elapsedSeconds: 0, halfTimeTaken: false, pauseReason: "" },
-      }));
+      const now = new Date().toISOString();
+      const matchId = `m${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+      setState((current) => {
+        const team1Name = saved.team1.name || "Team 1";
+        const team2Name = saved.team2.name || "Team 2";
+        const participants = paymentParticipants([...saved.team1.ids, ...saved.team2.ids], current.players);
+        const payment: MatchPayment = { matchId, createdAt: now, matchDate: scheduledFor || now, team1Name, team2Name, totalExpense: 0, participants };
+        return {
+          ...current,
+          tab: "match",
+          sub: "timeline",
+          team: { ids: saved.team1.ids, captain: saved.team1.captain },
+          pool: null,
+          match: { id: matchId, us: team1Name, opp: team2Name, them: 0, ev: [], incidents: [], motm: "", st: "Live", scheduledFor, elapsedSeconds: 0, halfTimeTaken: false, pauseReason: "" },
+          payments: [payment, ...current.payments.filter((item) => item.matchId !== matchId)].slice(0, 100),
+        };
+      });
       setShowGoal(false);
       setScheduleInput("");
     };
@@ -1885,13 +1958,17 @@ export default function SquadSheet() {
       if (scheduled && !kickoffDue) return;
       const now = Date.now();
       setClockNow(now);
-      setState((current) => ({ ...current, match: { ...current.match, startedAt: now, timerStartedAt: now, elapsedSeconds: 0, halfTimeTaken: false, pauseReason: "" } }));
+      setState((current) => ({
+        ...current,
+        match: { ...current.match, startedAt: now, timerStartedAt: now, elapsedSeconds: 0, halfTimeTaken: false, pauseReason: "" },
+        payments: current.payments.map((payment) => payment.matchId === current.match.id ? { ...payment, matchDate: new Date(now).toISOString(), team1Name: current.match.us, team2Name: current.match.opp } : payment),
+      }));
     };
     const deleteUnstartedMatch = () => {
       if (!window.confirm(scheduled ? "Delete this scheduled match? The generated teams will be kept." : "Delete this hosted match? The generated teams will be kept.")) return;
       setShowGoal(false);
       setMatchEventEditor("");
-      setState((current) => ({ ...current, team: null, match: newMatch(), tab: "team", sub: "timeline" }));
+      setState((current) => ({ ...current, team: null, match: newMatch(), payments: current.payments.filter((payment) => payment.matchId !== current.match.id), tab: "team", sub: "timeline" }));
     };
     const pauseMatchClock = (reason: MatchPauseReason) => setState((current) => {
       if (!current.match.startedAt) return current;
@@ -2068,8 +2145,9 @@ export default function SquadSheet() {
     const second = state.balancedTeams?.team2;
     const firstPlayers = state.team.ids.map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name, position: state.balancedTeams?.team1.positions[item.id] || defaultPosition(item), flag: item.flag, image: item.image }));
     const secondPlayers = (second?.ids || []).map((id) => player(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name, position: second?.positions[item.id] || defaultPosition(item), flag: item.flag, image: item.image }));
+    const matchId = state.match.id || `m${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
     const entry: MatchHistoryEntry = {
-      id: `m${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
+      id: matchId,
       endedAt: new Date().toISOString(),
       scheduledFor: state.match.scheduledFor,
       startedAt: new Date(state.match.startedAt).toISOString(),
@@ -2086,7 +2164,14 @@ export default function SquadSheet() {
     setMatchEventEditor("");
     setOpenHistoryId(entry.id);
     setHistoryDetailTab("timeline");
-    setState((current) => ({ ...current, team: null, sub: "history", match: newMatch(current.match), history: [entry, ...current.history].slice(0, 100) }));
+    setState((current) => {
+      const existingPayment = current.payments.find((payment) => payment.matchId === matchId);
+      const participants = [...entry.team1.players, ...entry.team2.players].map((item) => ({ id: item.id, name: item.name }));
+      const payment: MatchPayment = existingPayment
+        ? { ...existingPayment, matchDate: entry.startedAt || entry.endedAt, team1Name: entry.team1.name, team2Name: entry.team2.name, participants: participants.map((participant) => ({ ...participant, paidAt: existingPayment.participants.find((item) => item.id === participant.id)?.paidAt })) }
+        : { matchId, createdAt: entry.endedAt, matchDate: entry.startedAt || entry.endedAt, team1Name: entry.team1.name, team2Name: entry.team2.name, totalExpense: 0, participants };
+      return { ...current, team: null, sub: "history", match: newMatch(current.match), history: [entry, ...current.history].slice(0, 100), payments: [payment, ...current.payments.filter((item) => item.matchId !== matchId)].slice(0, 100) };
+    });
   }
 
   function Stats() {
@@ -2103,11 +2188,159 @@ export default function SquadSheet() {
 
   function MatchSettings() {
     if (!unlocked || !state.team) return null;
-    const updateMatch = (patch: Partial<Match>) => setState((current) => ({ ...current, match: { ...current.match, ...patch } }));
+    const updateMatch = (patch: Partial<Match>) => setState((current) => {
+      const match = { ...current.match, ...patch };
+      return {
+        ...current,
+        match,
+        payments: current.payments.map((payment) => payment.matchId === current.match.id ? {
+          ...payment,
+          team1Name: match.us,
+          team2Name: match.opp,
+          matchDate: match.startedAt ? new Date(match.startedAt).toISOString() : match.scheduledFor || payment.createdAt,
+        } : payment),
+      };
+    });
     const allIds = [...new Set([...state.team.ids, ...(state.balancedTeams?.team2.ids || [])])];
     return <div className="sec"><h2>Match settings</h2><div className="row2"><div><label htmlFor="tn">Team 1 name</label><input id="tn" value={state.match.us} onChange={(e) => updateMatch({ us: e.target.value })} /></div><div><label htmlFor="on">Team 2 name</label><input id="on" value={state.match.opp} onChange={(e) => updateMatch({ opp: e.target.value })} /></div></div><label htmlFor="mo">Man of the match</label><select id="mo" value={state.match.motm} onChange={(e) => updateMatch({ motm: e.target.value })}><option value="">Automatic</option>{allIds.map((id) => <option value={id} key={id}>{player(id)?.name}</option>)}</select>
       {!state.match.startedAt && <><label htmlFor="edit-kickoff">Scheduled kickoff (leave empty for ready now)</label><input id="edit-kickoff" type="datetime-local" value={datetimeLocalValue(state.match.scheduledFor)} onChange={(event) => updateMatch({ scheduledFor: event.target.value ? new Date(event.target.value).toISOString() : undefined })} /></>}
-      <div className="button-row">{state.match.st === "Live" && state.match.startedAt && <button className="b pri" onClick={endCurrentMatch}>End & save match</button>}<button className="b line" onClick={() => { if (!window.confirm("Delete the current match? Saved history will be kept.")) return; setShowGoal(false); setMatchEventEditor(""); setState((current) => ({ ...current, team: null, match: newMatch(), tab: "team", sub: "timeline" })); }}>Delete current match</button></div></div>;
+      <div className="button-row">{state.match.st === "Live" && state.match.startedAt && <button className="b pri" onClick={endCurrentMatch}>End & save match</button>}<button className="b line" onClick={() => { if (!window.confirm("Delete the current match? Saved history will be kept.")) return; setShowGoal(false); setMatchEventEditor(""); setState((current) => ({ ...current, team: null, match: newMatch(), payments: current.payments.filter((payment) => payment.matchId !== current.match.id), tab: "team", sub: "timeline" })); }}>Delete current match</button></div></div>;
+  }
+
+  function PaymentView() {
+    const updatePayment = (matchId: string, updater: (payment: MatchPayment) => MatchPayment) => setState((current) => ({
+      ...current,
+      payments: current.payments.map((payment) => payment.matchId === matchId ? updater(payment) : payment),
+    }));
+    const addPayment = (payment: MatchPayment) => setState((current) => current.payments.some((item) => item.matchId === payment.matchId) ? current : { ...current, payments: [payment, ...current.payments].slice(0, 100) });
+    const createManualPayment = (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const data = new FormData(form);
+      const participantIds = data.getAll("participant").map(String);
+      if (!participantIds.length) {
+        window.alert("Select at least one player for this match.");
+        return;
+      }
+      const rawMatchDate = String(data.get("matchDate") || "");
+      const parsedMatchDate = Date.parse(rawMatchDate);
+      if (!Number.isFinite(parsedMatchDate)) {
+        window.alert("Choose a valid match date and time.");
+        return;
+      }
+      const createdAt = new Date(paymentNow).toISOString();
+      addPayment({
+        matchId: `manual-payment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        createdAt,
+        matchDate: new Date(parsedMatchDate).toISOString(),
+        team1Name: String(data.get("team1Name") || "").trim() || "Team 1",
+        team2Name: String(data.get("team2Name") || "").trim() || "Team 2",
+        totalExpense: Math.max(0, Number(data.get("totalExpense")) || 0),
+        participants: paymentParticipants(participantIds, state.players),
+      });
+      form.reset();
+    };
+    const deletePayment = (payment: MatchPayment) => {
+      if (!window.confirm(`Delete the payment record for ${payment.team1Name} vs ${payment.team2Name}? This will not delete the match itself.`)) return;
+      setState((current) => ({ ...current, payments: current.payments.filter((item) => item.matchId !== payment.matchId) }));
+    };
+    const currentMatchMissing = Boolean(state.team?.ids.length && state.match.id && !state.payments.some((payment) => payment.matchId === state.match.id));
+    const historyWithoutPayments = state.history.filter((entry) => !state.payments.some((payment) => payment.matchId === entry.id));
+    const createCurrentPayment = () => {
+      if (!state.team || !state.match.id) return;
+      const ids = [...state.team.ids, ...(state.balancedTeams?.team2.ids || [])];
+      const createdAt = new Date(paymentNow).toISOString();
+      addPayment({
+        matchId: state.match.id,
+        createdAt,
+        matchDate: state.match.startedAt ? new Date(state.match.startedAt).toISOString() : state.match.scheduledFor || createdAt,
+        team1Name: state.match.us,
+        team2Name: state.match.opp,
+        totalExpense: 0,
+        participants: paymentParticipants(ids, state.players),
+      });
+    };
+    const createHistoryPayment = (entry: MatchHistoryEntry) => addPayment({
+      matchId: entry.id,
+      createdAt: entry.endedAt,
+      matchDate: entry.startedAt || entry.scheduledFor || entry.endedAt,
+      team1Name: entry.team1.name,
+      team2Name: entry.team2.name,
+      totalExpense: 0,
+      participants: [...new Map([...entry.team1.players, ...entry.team2.players].map((item) => [item.id, { id: item.id, name: item.name }])).values()],
+    });
+    const records = [...state.payments].sort((a, b) => Date.parse(b.matchDate) - Date.parse(a.matchDate));
+    const recordShare = (payment: MatchPayment) => payment.participants.length ? payment.totalExpense / payment.participants.length : 0;
+    const totalExpenses = records.reduce((sum, payment) => sum + payment.totalExpense, 0);
+    const totalPaid = records.reduce((sum, payment) => sum + recordShare(payment) * payment.participants.filter((participant) => participant.paidAt).length, 0);
+    const totalOutstanding = Math.max(0, totalExpenses - totalPaid);
+    const overdueByPlayer = new Map<string, { name: string; amount: number; matches: number }>();
+    for (const payment of records) {
+      const share = recordShare(payment);
+      for (const participant of payment.participants) {
+        if (!paymentIsOverdue(payment, participant, paymentNow)) continue;
+        const existing = overdueByPlayer.get(participant.id) || { name: participant.name, amount: 0, matches: 0 };
+        overdueByPlayer.set(participant.id, { name: participant.name, amount: existing.amount + share, matches: existing.matches + 1 });
+      }
+    }
+    const overduePlayers = [...overdueByPlayer.entries()].sort(([, a], [, b]) => b.amount - a.amount || a.name.localeCompare(b.name));
+    const paymentCard = (payment: MatchPayment) => {
+      const share = recordShare(payment);
+      const paidCount = payment.participants.filter((participant) => participant.paidAt).length;
+      const unpaidCount = payment.participants.length - paidCount;
+      const overdueCount = payment.participants.filter((participant) => paymentIsOverdue(payment, participant, paymentNow)).length;
+      const dueAt = paymentDueAt(payment);
+      const isCurrent = Boolean(state.team && state.match.id === payment.matchId);
+      const status = payment.totalExpense <= 0 ? "Expense not set" : !unpaidCount ? "Fully paid" : overdueCount ? `${overdueCount} overdue` : `${unpaidCount} unpaid`;
+      return <article className={`payment-card${overdueCount ? " has-overdue" : ""}`} key={payment.matchId}>
+        <header className="payment-card-head"><div><span>{isCurrent ? "Current match" : "Match payment"}</span><h2>{payment.team1Name} <i>vs</i> {payment.team2Name}</h2><p>{new Date(payment.matchDate).toLocaleString()} · Due {new Date(dueAt).toLocaleString()}</p></div><div className="payment-card-head-actions"><strong className={overdueCount ? "is-overdue" : paidCount === payment.participants.length && payment.totalExpense > 0 ? "is-paid" : ""}>{status}</strong>{unlocked && <button type="button" className="b line danger sm" onClick={() => deletePayment(payment)}>Delete</button>}</div></header>
+        <div className="payment-totals">
+          <div>{unlocked ? <><label htmlFor={`payment-total-${payment.matchId}`}>Total expense ({PAYMENT_CURRENCY})</label><input id={`payment-total-${payment.matchId}`} type="number" min="0" step="0.01" inputMode="decimal" value={payment.totalExpense || ""} placeholder="0.00" onChange={(event) => updatePayment(payment.matchId, (current) => ({ ...current, totalExpense: Math.max(0, Number(event.target.value) || 0) }))} /></> : <><small>Total expense</small><strong>{paymentAmount(payment.totalExpense)}</strong></>}</div>
+          <div><small>Players</small><strong>{payment.participants.length}</strong></div>
+          <div><small>Each player</small><strong>{payment.totalExpense > 0 ? paymentAmount(share) : "Not set"}</strong></div>
+          <div><small>Collected</small><strong>{paymentAmount(share * paidCount)}</strong></div>
+        </div>
+        {unlocked && payment.totalExpense > 0 && <div className="payment-bulk-actions"><button type="button" className="b line sm" onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map((participant) => ({ ...participant, paidAt: participant.paidAt || new Date().toISOString() })) }))}>Mark all paid</button><button type="button" className="b line sm" onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map(({ paidAt: _paidAt, ...participant }) => participant) }))}>Mark all unpaid</button></div>}
+        <div className="payment-player-list">{payment.participants.map((participant) => {
+          const overdue = paymentIsOverdue(payment, participant, paymentNow);
+          const previousOverdue = records.filter((item) => item.matchId !== payment.matchId).reduce((sum, item) => {
+            const savedParticipant = item.participants.find((candidate) => candidate.id === participant.id);
+            return sum + (savedParticipant && paymentIsOverdue(item, savedParticipant, paymentNow) ? recordShare(item) : 0);
+          }, 0);
+          return <div className={`payment-player${overdue || previousOverdue > 0 ? " is-overdue" : participant.paidAt ? " is-paid" : " is-unpaid"}`} key={participant.id}>
+            <span className="payment-avatar">{initials(participant.name)}</span>
+            <div><strong>{participant.name}</strong><small>{participant.paidAt ? `Paid ${new Date(participant.paidAt).toLocaleString()}` : overdue ? "Payment overdue" : payment.totalExpense > 0 ? "Payment pending" : "Waiting for expense"}{isCurrent && previousOverdue > 0 ? ` · Previous overdue: ${paymentAmount(previousOverdue)}` : ""}</small></div>
+            <b>{payment.totalExpense > 0 ? paymentAmount(share) : "—"}</b>
+            {unlocked && payment.totalExpense > 0 && <button type="button" className={`b sm ${participant.paidAt ? "line" : "pri"}`} onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map((item) => item.id === participant.id ? item.paidAt ? { id: item.id, name: item.name } : { ...item, paidAt: new Date().toISOString() } : item) }))}>{participant.paidAt ? "Mark unpaid" : "Mark paid"}</button>}
+          </div>;
+        })}</div>
+      </article>;
+    };
+
+    return <>
+      <div className="sec payment-intro"><span className="payment-kicker">Participation fees</span><h1>Match payments</h1><p>Expenses are split equally between everyone listed for that match. Payment is manual for now, and unpaid players are still allowed in future matches.</p></div>
+      <div className="payment-summary-grid">
+        <article><span>Total expenses</span><strong>{paymentAmount(totalExpenses)}</strong><small>Across {records.filter((payment) => payment.totalExpense > 0).length} configured match{records.filter((payment) => payment.totalExpense > 0).length === 1 ? "" : "es"}</small></article>
+        <article><span>Collected</span><strong>{paymentAmount(totalPaid)}</strong><small>Marked paid manually</small></article>
+        <article className={overduePlayers.length ? "has-overdue" : ""}><span>Outstanding</span><strong>{paymentAmount(totalOutstanding)}</strong><small>{overduePlayers.length} player{overduePlayers.length === 1 ? "" : "s"} overdue</small></article>
+      </div>
+      {unlocked && <details className="sec payment-manual">
+        <summary><span><strong>Add a past match payment</strong><small>For a match that was played before payment tracking was added</small></span><b>＋</b></summary>
+        <form onSubmit={createManualPayment}>
+          <div className="payment-manual-fields">
+            <div><label htmlFor="manual-payment-team-1">Team 1 name</label><input id="manual-payment-team-1" name="team1Name" defaultValue="Team Alpha" required /></div>
+            <div><label htmlFor="manual-payment-team-2">Team 2 name</label><input id="manual-payment-team-2" name="team2Name" defaultValue="Team Bravo" required /></div>
+            <div><label htmlFor="manual-payment-date">Match date and time</label><input id="manual-payment-date" name="matchDate" type="datetime-local" defaultValue={datetimeLocalValue(new Date(paymentNow - 7 * 24 * 60 * 60 * 1000).toISOString())} max={datetimeLocalValue(new Date(paymentNow).toISOString())} required /></div>
+            <div><label htmlFor="manual-payment-expense">Total expense ({PAYMENT_CURRENCY})</label><input id="manual-payment-expense" name="totalExpense" type="number" min="0.01" step="0.01" inputMode="decimal" placeholder="0.00" required /></div>
+          </div>
+          <fieldset className="payment-participant-picker"><legend>Players who participated</legend><p className="note">Only selected players will share this expense.</p><div>{[...state.players].sort((a, b) => Number(b.on !== false) - Number(a.on !== false) || a.name.localeCompare(b.name)).map((item) => <label key={item.id}><input type="checkbox" name="participant" value={item.id} defaultChecked={item.on !== false} /><span className="payment-avatar">{initials(item.name)}</span><strong>{item.name}</strong>{item.on === false && <small>Inactive</small>}</label>)}</div></fieldset>
+          <button className="b pri" type="submit">Add payment record</button>
+        </form>
+      </details>}
+      {overduePlayers.length > 0 && <div className="sec payment-overdue-panel"><h2>Overdue payments</h2><p className="note">These fees have remained unpaid for at least three days after their match. Players stay eligible for future matches.</p><div>{overduePlayers.map(([id, debt]) => <div key={id}><span><strong>{debt.name}</strong><small>{debt.matches} overdue match{debt.matches === 1 ? "" : "es"}</small></span><b>{paymentAmount(debt.amount)}</b></div>)}</div></div>}
+      {unlocked && (currentMatchMissing || historyWithoutPayments.length > 0) && <div className="sec payment-import"><h2>Set up older match payments</h2><p className="note">Create records for matches that existed before payment tracking was added.</p>{currentMatchMissing && <button className="b pri" type="button" onClick={createCurrentPayment}>Set up current match payment</button>}{historyWithoutPayments.map((entry) => <div key={entry.id}><span>{entry.team1.name} vs {entry.team2.name} · {new Date(entry.endedAt).toLocaleDateString()}</span><button className="b line sm" type="button" onClick={() => createHistoryPayment(entry)}>Set up payment</button></div>)}</div>}
+      <div className="payment-records">{records.length ? records.map(paymentCard) : <div className="sec"><div className="empty">Payment records appear here when an admin hosts a match.</div></div>}</div>
+    </>;
   }
 
   const unlock = async (event: React.FormEvent) => {
@@ -2190,14 +2423,14 @@ export default function SquadSheet() {
   return <div className={`app sport-${state.sportMode}${unlocked ? " is-admin" : " is-view-only"}`}>
     {cricketMode
       ? <nav className="tabs cricket-tabs" aria-label="Cricket navigation">{(["match", "team", "players"] as CricketTab[]).map((tab) => <button type="button" key={tab} className={state.cricket.tab === tab ? "on" : ""} onClick={() => setState((current) => ({ ...current, cricket: { ...current.cricket, tab } }))}>{tab}</button>)}</nav>
-      : <nav className="tabs" aria-label="Main navigation">{(["match", "team", "players"] as MainTab[]).map((tab) => <button key={tab} onClick={() => setTab(tab)} className={state.tab === tab ? "on" : ""}>{tab}</button>)}</nav>}
+      : <nav className="tabs" aria-label="Main navigation">{(["match", "team", "players", "payment"] as MainTab[]).map((tab) => <button key={tab} onClick={() => setTab(tab)} className={state.tab === tab ? "on" : ""}>{tab}</button>)}</nav>}
     <div className={`sync-status is-${syncStatus}`}>
       {unlocked && <button className="sport-switch" type="button" onClick={switchSportMode}>{cricketMode ? "Switch to football" : "Switch to cricket"}</button>}
       <span className="sync-message" role="status" aria-live="polite"><i className="sync-dot" />{syncText}</span>
       {unlocked && <button className="admin-session-button" type="button" onClick={openPasswordChange}>Change password</button>}
       <button className="admin-session-button" type="button" onClick={() => unlocked ? void lock() : setShowAdminLogin(true)}>{unlocked ? "Exit admin" : "Admin login"}</button>
     </div>
-    <main>{cricketMode ? <CricketWorkspace value={state.cricket} unlocked={unlocked} uploadPlayerImage={preparePlayerImage} uploadTeamFlag={uploadTeamFlag} onChange={(updater) => setState((current) => ({ ...current, cricket: updater(current.cricket) }))} /> : state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : MatchView()}</main>
+    <main>{cricketMode ? <CricketWorkspace value={state.cricket} unlocked={unlocked} uploadPlayerImage={preparePlayerImage} uploadTeamFlag={uploadTeamFlag} onChange={(updater) => setState((current) => ({ ...current, cricket: updater(current.cricket) }))} /> : state.tab === "players" ? PlayersView() : state.tab === "team" ? TeamView() : state.tab === "payment" ? PaymentView() : MatchView()}</main>
     {showAdminLogin && !unlocked && <div className="admin-login-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAdminLogin(false); }}><form className="access-card admin-login-card" onSubmit={unlock} role="dialog" aria-modal="true" aria-labelledby="admin-login-title">
       <button className="admin-login-close" type="button" onClick={() => setShowAdminLogin(false)} aria-label="Close admin login">×</button>
       <img src="/badges/squad-sheet-fc.png" alt="" />
