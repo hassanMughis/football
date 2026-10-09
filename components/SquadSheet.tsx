@@ -122,6 +122,7 @@ type MatchPayment = {
   team2Name: string;
   totalExpense: number;
   participants: PaymentParticipant[];
+  rosterKey?: string;
 };
 type AppState = {
   syncVersion?: number;
@@ -169,6 +170,7 @@ const paymentParticipants = (ids: string[], players: Player[]) => {
   const playerById = new Map(players.map((item) => [item.id, item]));
   return [...new Set(ids)].map((id) => playerById.get(id)).filter((item): item is Player => Boolean(item)).map((item) => ({ id: item.id, name: item.name }));
 };
+const paymentRosterKey = (ids: string[]) => [...new Set(ids)].sort().join("|");
 const elapsedMatchSeconds = (match: Match, now = Date.now()) => Math.min(MATCH_DURATION_SECONDS, Math.max(0,
   Math.floor(match.elapsedSeconds || 0) + (match.timerStartedAt ? Math.max(0, Math.floor((now - match.timerStartedAt) / 1000)) : 0),
 ));
@@ -440,6 +442,7 @@ const restoreState = (value: unknown): AppState => {
       team2Name: typeof payment.team2Name === "string" && payment.team2Name.trim() ? payment.team2Name.trim() : "Team 2",
       totalExpense: Math.max(0, Number(payment.totalExpense) || 0),
       participants,
+      rosterKey: typeof payment.rosterKey === "string" ? payment.rosterKey : undefined,
     } satisfies MatchPayment];
   }) : [];
   const payments = [...new Map(restoredPayments.map((payment) => [payment.matchId, payment])).values()].slice(0, 100);
@@ -1058,6 +1061,7 @@ export default function SquadSheet() {
   const [scheduleInput, setScheduleInput] = useState("");
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [paymentNow, setPaymentNow] = useState(() => Date.now());
+  const [showCurrentPaymentForm, setShowCurrentPaymentForm] = useState(false);
   const [openHistoryId, setOpenHistoryId] = useState("");
   const [historyDetailTab, setHistoryDetailTab] = useState<HistoryDetailTab>("timeline");
   const [openRosterCardId, setOpenRosterCardId] = useState("");
@@ -1206,6 +1210,30 @@ export default function SquadSheet() {
     const interval = window.setInterval(tick, 60_000);
     return () => window.clearInterval(interval);
   }, [state.sportMode, state.tab]);
+
+  useEffect(() => {
+    if (!state.team || !state.match.id || state.match.startedAt || !state.balancedTeams) return;
+    const rosterIds = [...state.balancedTeams.team1.ids, ...state.balancedTeams.team2.ids];
+    const rosterKey = paymentRosterKey(rosterIds);
+    const teamSnapshotNeedsSync = paymentRosterKey(state.team.ids) !== paymentRosterKey(state.balancedTeams.team1.ids) || state.team.captain !== state.balancedTeams.team1.captain;
+    const payment = state.payments.find((item) => item.matchId === state.match.id);
+    const paymentNeedsSync = Boolean(payment && payment.rosterKey !== rosterKey);
+    if (!teamSnapshotNeedsSync && !paymentNeedsSync) return;
+    setState((current) => {
+      if (!current.team || !current.match.id || current.match.startedAt || !current.balancedTeams) return current;
+      const currentRosterIds = [...current.balancedTeams.team1.ids, ...current.balancedTeams.team2.ids];
+      const currentRosterKey = paymentRosterKey(currentRosterIds);
+      return {
+        ...current,
+        team: { ids: [...current.balancedTeams.team1.ids], captain: current.balancedTeams.team1.captain },
+        payments: current.payments.map((item) => item.matchId !== current.match.id || item.rosterKey === currentRosterKey ? item : {
+          ...item,
+          rosterKey: currentRosterKey,
+          participants: paymentParticipants(currentRosterIds, current.players).map((participant) => ({ ...participant, paidAt: item.participants.find((saved) => saved.id === participant.id)?.paidAt })),
+        }),
+      };
+    });
+  }, [state.balancedTeams, state.match.id, state.match.startedAt, state.payments, state.players, state.team]);
 
   useEffect(() => {
     if (state.match.st !== "Live" || !state.match.timerStartedAt || elapsedMatchSeconds(state.match, clockNow) < MATCH_DURATION_SECONDS) return;
@@ -1414,6 +1442,7 @@ export default function SquadSheet() {
     const selected = formationTeam === 1 ? state.balancedTeams.team1 : state.balancedTeams.team2;
     const substituteIds = selected.substitutes || [];
     const starterIds = selected.ids.filter((id) => !substituteIds.includes(id));
+    const formationEditable = unlocked && !state.match.startedAt;
     const selectedPlayer = selected.ids.includes(formationPlayerId) ? player(formationPlayerId) : undefined;
     const liveTeamFlag = useTeamFlags ? selected.flag || null : undefined;
     const rowFor = (position: string) => ["ST", "CF"].includes(position) ? 12 : ["LW", "CAM", "RW"].includes(position) ? 31 : ["LM", "CM", "CDM", "RM"].includes(position) ? 50 : ["LB", "CB", "RB"].includes(position) ? 70 : position === "GK" ? 88 : 50;
@@ -1442,7 +1471,7 @@ export default function SquadSheet() {
       ...placeItems(positioned.filter((item) => !occupiedSlotIds.has(item.id))),
     ];
     const moveFormationPlayer = (id: string, position: string, occupantId = "") => {
-      if (!unlocked || !id || !starterIds.includes(id)) return;
+      if (!formationEditable || !id || !starterIds.includes(id)) return;
       setState((current) => {
         if (!current.balancedTeams) return current;
         const key = formationTeam === 1 ? "team1" : "team2";
@@ -1470,7 +1499,7 @@ export default function SquadSheet() {
       const item = player(id); if (!item) return null;
       const design = CARD_STYLES.find((style) => style.id === item.cardStyle) || CARD_STYLES[0];
       const assignedPosition = selected.positions[id] || defaultPosition(item);
-      return <button type="button" draggable={unlocked} className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}${draggedFormationId === id ? " is-dragging" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onDragStart={(event) => { if (!unlocked) return; setDraggedFormationId(id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", id); }} onDragEnd={() => setDraggedFormationId("")} onDragOver={(event) => { if (unlocked && draggedFormationId && draggedFormationId !== id) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, assignedPosition, id); }} onClick={() => unlocked && draggedFormationId && draggedFormationId !== id ? moveFormationPlayer(draggedFormationId, assignedPosition, id) : setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
+      return <button type="button" draggable={formationEditable} className={`formation-mini-card${formationPlayerId === id ? " is-selected" : ""}${draggedFormationId === id ? " is-dragging" : ""}`} style={{ "--formation-x": `${x}%`, "--formation-y": `${y}%` } as React.CSSProperties} key={id} onDragStart={(event) => { if (!formationEditable) return; setDraggedFormationId(id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", id); }} onDragEnd={() => setDraggedFormationId("")} onDragOver={(event) => { if (formationEditable && draggedFormationId && draggedFormationId !== id) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, assignedPosition, id); }} onClick={() => formationEditable && draggedFormationId && draggedFormationId !== id ? moveFormationPlayer(draggedFormationId, assignedPosition, id) : setFormationPlayerId(formationPlayerId === id ? "" : id)} aria-label={`View ${item.name} card, ${assignedPosition}`}>
         <img className="formation-mini-frame" src={item.image ? design.cleanSrc : design.src} alt="" />
         {item.image && <PlayerPhoto className="formation-mini-photo" src={item.image} alt="" />}
         <span className="formation-mini-overall">{positionOverall(item, assignedPosition) ?? "–"}</span>
@@ -1481,9 +1510,9 @@ export default function SquadSheet() {
       </button>;
     };
     return <section className="formation-board">
-      <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {starterIds.length}/11 starters{substituteIds.length ? ` · ${substituteIds.length} on bench` : ""} · {unlocked ? "Drag cards to move or swap" : "Select a card to view player details"}</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
+      <div className="formation-board-head"><div><h2>Formation map</h2><p>{selected.name} · {starterIds.length}/11 starters{substituteIds.length ? ` · ${substituteIds.length} on bench` : ""} · {formationEditable ? "Drag cards to move or swap" : "Select a card to view player details"}</p></div><div className="formation-team-tabs"><button className={formationTeam === 1 ? "on" : ""} onClick={() => { setFormationTeam(1); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team1.name}</button><button className={formationTeam === 2 ? "on" : ""} onClick={() => { setFormationTeam(2); setFormationPlayerId(""); setDraggedFormationId(""); }}>{state.balancedTeams.team2.name}</button></div></div>
       <div className={`formation-stage${selectedPlayer ? " has-selection" : ""}`}><div><div className={`formation-pitch${draggedFormationId ? " is-moving" : ""}`}><span className="pitch-box pitch-box-top" /><span className="pitch-box pitch-box-bottom" />{slotPlacements.map((slot) => <button type="button" className="formation-slot" style={{ "--formation-x": `${slot.x}%`, "--formation-y": `${slot.y}%` } as React.CSSProperties} key={slot.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => { event.preventDefault(); moveFormationPlayer(event.dataTransfer.getData("text/plain") || draggedFormationId, slot.position, slot.occupantId); }} onClick={() => draggedFormationId && moveFormationPlayer(draggedFormationId, slot.position, slot.occupantId)} aria-label={`Move selected player to ${slot.position}`}><span>{slot.position}</span></button>)}{placements.map(miniCard)}</div>{substituteIds.length > 0 && <div className="formation-bench"><strong>Substitutes</strong><div>{substituteIds.map((id) => { const item = player(id); if (!item) return null; return <button key={id} onClick={() => setFormationPlayerId(formationPlayerId === id ? "" : id)}><span className="bench-avatar">{item.image ? <img src={item.image} alt="" /> : initials(item.name)}</span><span>{item.name}</span>{matchMarks(id)}</button>; })}</div></div>}</div>
-      {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {substituteIds.includes(selectedPlayer.id) ? "Substitute" : selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><div className="formation-move-actions">{unlocked && !substituteIds.includes(selectedPlayer.id) && <button className={`b sm ${draggedFormationId === selectedPlayer.id ? "pri" : "line"}`} onClick={() => setDraggedFormationId(draggedFormationId === selectedPlayer.id ? "" : selectedPlayer.id)}>{draggedFormationId === selectedPlayer.id ? "Cancel move" : "Move"}</button>}<button className="b line sm" onClick={() => { setFormationPlayerId(""); setDraggedFormationId(""); }}>Close</button></div></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: substituteIds.includes(selectedPlayer.id) ? undefined : selected.positions[selectedPlayer.id], flagOverride: liveTeamFlag, flagLabel: selected.name })}</aside>}</div>
+      {selectedPlayer && <aside className="formation-selected-card"><div className="formation-selected-head"><span>{selectedPlayer.name} · {substituteIds.includes(selectedPlayer.id) ? "Substitute" : selected.positions[selectedPlayer.id] || defaultPosition(selectedPlayer)}</span><div className="formation-move-actions">{formationEditable && !substituteIds.includes(selectedPlayer.id) && <button className={`b sm ${draggedFormationId === selectedPlayer.id ? "pri" : "line"}`} onClick={() => setDraggedFormationId(draggedFormationId === selectedPlayer.id ? "" : selectedPlayer.id)}>{draggedFormationId === selectedPlayer.id ? "Cancel move" : "Move"}</button>}<button className="b line sm" onClick={() => { setFormationPlayerId(""); setDraggedFormationId(""); }}>Close</button></div></div>{PlayerCard({ item: selectedPlayer, compact: true, positionOverride: substituteIds.includes(selectedPlayer.id) ? undefined : selected.positions[selectedPlayer.id], flagOverride: liveTeamFlag, flagLabel: selected.name })}</aside>}</div>
     </section>;
   }
 
@@ -1676,6 +1705,7 @@ export default function SquadSheet() {
 
   function TeamView() {
     const saved = state.balancedTeams;
+    const teamEditingLocked = Boolean(state.match.startedAt);
     const captain1 = saved?.team1.captain || pickCaptain;
     const captain2 = saved?.team2.captain || pickCaptainTwo;
     const assignedIds = new Set(saved ? [...saved.team1.ids, ...saved.team2.ids] : []);
@@ -1717,6 +1747,7 @@ export default function SquadSheet() {
     };
 
     const generateTeams = (shuffle: boolean) => {
+      if (teamEditingLocked) return;
       if (!captainsReady()) return;
       const rosterSeed = rosterBalanceSeed(active);
       const seed = shuffle ? nextBalanceSeed(saved?.seed ?? rosterSeed) : rosterSeed;
@@ -1735,6 +1766,7 @@ export default function SquadSheet() {
     };
 
     const startManualPick = () => {
+      if (teamEditingLocked) return;
       if (!captainsReady()) return;
       setState((current) => ({
         ...current,
@@ -1748,12 +1780,20 @@ export default function SquadSheet() {
     };
 
     const updateTeam = (team: "team1" | "team2", patch: Partial<BalancedTeam>) => setState((current) => {
-      if (!current.balancedTeams) return current;
-      return { ...current, balancedTeams: { ...current.balancedTeams, [team]: { ...current.balancedTeams[team], ...patch } } };
+      if (!current.balancedTeams || current.match.startedAt) return current;
+      const selected = { ...current.balancedTeams[team], ...patch };
+      const balancedTeams = { ...current.balancedTeams, [team]: selected };
+      const match = current.team && current.match.id && typeof patch.name === "string"
+        ? { ...current.match, [team === "team1" ? "us" : "opp"]: patch.name }
+        : current.match;
+      const payments = current.team && current.match.id && typeof patch.name === "string"
+        ? current.payments.map((payment) => payment.matchId === current.match.id ? { ...payment, [team === "team1" ? "team1Name" : "team2Name"]: patch.name || (team === "team1" ? "Team 1" : "Team 2") } : payment)
+        : current.payments;
+      return { ...current, balancedTeams, match, payments };
     });
 
     const changeCaptain = (team: "team1" | "team2", id: string) => setState((current) => {
-      if (!current.balancedTeams) return current;
+      if (!current.balancedTeams || current.match.startedAt) return current;
       const selected = current.balancedTeams[team];
       if (!selected.ids.includes(id) || (selected.substitutes || []).includes(id)) return current;
       return {
@@ -1793,7 +1833,7 @@ export default function SquadSheet() {
     };
 
     const assignPlayer = (id: string, destination: "team1" | "team2") => setState((current) => {
-      if (!current.balancedTeams) return current;
+      if (!current.balancedTeams || current.match.startedAt) return current;
       const source = destination === "team1" ? "team2" : "team1";
       if (current.balancedTeams[source].captain === id) return current;
       const sourceIds = current.balancedTeams[source].ids.filter((playerId) => playerId !== id);
@@ -1824,7 +1864,7 @@ export default function SquadSheet() {
     };
 
     const updateLineupPosition = (team: "team1" | "team2", id: string, position: string) => setState((current) => {
-      if (!current.balancedTeams || !POSITIONS.includes(position as typeof POSITIONS[number])) return current;
+      if (!current.balancedTeams || current.match.startedAt || !POSITIONS.includes(position as typeof POSITIONS[number])) return current;
       const selected = current.balancedTeams[team];
       const previousPosition = selected.positions[id] || "CM";
       if (previousPosition === position) return current;
@@ -1842,6 +1882,7 @@ export default function SquadSheet() {
     });
 
     const deleteTeams = () => {
+      if (teamEditingLocked) return;
       if (!window.confirm("Delete both generated teams? The player list and match history will be kept.")) return;
       setState((current) => ({ ...current, balancedTeams: null, team: null, pool: null, match: newMatch() }));
       setPickCaptain("");
@@ -1850,13 +1891,10 @@ export default function SquadSheet() {
 
     const hostMatch = (scheduledFor?: string) => {
       if (!saved || unassigned.length) return;
-      const now = new Date().toISOString();
       const matchId = `m${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
       setState((current) => {
         const team1Name = saved.team1.name || "Team 1";
         const team2Name = saved.team2.name || "Team 2";
-        const participants = paymentParticipants([...saved.team1.ids, ...saved.team2.ids], current.players);
-        const payment: MatchPayment = { matchId, createdAt: now, matchDate: scheduledFor || now, team1Name, team2Name, totalExpense: 0, participants };
         return {
           ...current,
           tab: "match",
@@ -1864,7 +1902,6 @@ export default function SquadSheet() {
           team: { ids: saved.team1.ids, captain: saved.team1.captain },
           pool: null,
           match: { id: matchId, us: team1Name, opp: team2Name, them: 0, ev: [], incidents: [], motm: "", st: "Live", scheduledFor, elapsedSeconds: 0, halfTimeTaken: false, pauseReason: "" },
-          payments: [payment, ...current.payments.filter((item) => item.matchId !== matchId)].slice(0, 100),
         };
       });
       setShowGoal(false);
@@ -1889,22 +1926,22 @@ export default function SquadSheet() {
       const activeAction = teamRosterAction?.team === key ? teamRosterAction.action : null;
       const actionPrompt = activeAction === "captain" ? "Choose the new captain" : activeAction === "bench" ? "Choose a player to move to or from the bench" : activeAction === "move" ? `Choose a player to move to ${saved[other].name || `Team ${number === 1 ? 2 : 1}`}` : "";
       return <div className="card balanced-team-card">
-        {unlocked ? <div className="team-identity-fields"><div><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><div className="team-flag-heading"><label htmlFor={`team-flag-${number}`}>Team flag</label><div className="team-action-menu"><button type="button" className="b line sm team-menu-trigger" aria-label={`Open ${team.name || `Team ${number}`} actions`} aria-expanded={openTeamMenu === key} onClick={() => setOpenTeamMenu((current) => current === key ? "" : key)}>⋯</button>{openTeamMenu === key && <div className="team-action-menu__list"><button type="button" onClick={() => chooseTeamAction(key, "captain")}>Change captain</button><button type="button" disabled={Boolean(state.match.startedAt)} onClick={() => chooseTeamAction(key, "bench")}>Starter / bench</button><button type="button" disabled={unassigned.length > 0 || Boolean(state.match.startedAt)} onClick={() => chooseTeamAction(key, "move")}>Move to {saved[other].name || `Team ${number === 1 ? 2 : 1}`}</button></div>}</div></div><div className="team-flag-field"><TeamMark name={team.name} flag={team.flag} className="team-flag-preview" /><div className="team-flag-actions"><label className="b line sm photo-button">{teamFlagUploading === key ? "Uploading…" : team.flag ? "Replace PNG" : "Upload PNG"}<input id={`team-flag-${number}`} type="file" accept="image/png,.png" disabled={Boolean(teamFlagUploading)} onChange={(event) => { const file = event.target.files?.[0]; void changeTeamFlag(key, file); event.target.value = ""; }} /></label>{team.flag && <button type="button" className="b line sm" disabled={Boolean(teamFlagUploading)} onClick={() => updateTeam(key, { flag: "" })}>Remove</button>}</div></div></div></div> : <h3 className="public-team-name"><TeamMark name={team.name} flag={team.flag} className="team-name-flag" />{team.name}</h3>}
+        {unlocked && !teamEditingLocked ? <div className="team-identity-fields"><div><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><div className="team-flag-heading"><label htmlFor={`team-flag-${number}`}>Team flag</label><div className="team-action-menu"><button type="button" className="b line sm team-menu-trigger" aria-label={`Open ${team.name || `Team ${number}`} actions`} aria-expanded={openTeamMenu === key} onClick={() => setOpenTeamMenu((current) => current === key ? "" : key)}>⋯</button>{openTeamMenu === key && <div className="team-action-menu__list"><button type="button" onClick={() => chooseTeamAction(key, "captain")}>Change captain</button><button type="button" onClick={() => chooseTeamAction(key, "bench")}>Starter / bench</button><button type="button" disabled={unassigned.length > 0} onClick={() => chooseTeamAction(key, "move")}>Move to {saved[other].name || `Team ${number === 1 ? 2 : 1}`}</button></div>}</div></div><div className="team-flag-field"><TeamMark name={team.name} flag={team.flag} className="team-flag-preview" /><div className="team-flag-actions"><label className="b line sm photo-button">{teamFlagUploading === key ? "Uploading…" : team.flag ? "Replace PNG" : "Upload PNG"}<input id={`team-flag-${number}`} type="file" accept="image/png,.png" disabled={Boolean(teamFlagUploading)} onChange={(event) => { const file = event.target.files?.[0]; void changeTeamFlag(key, file); event.target.value = ""; }} /></label>{team.flag && <button type="button" className="b line sm" disabled={Boolean(teamFlagUploading)} onClick={() => updateTeam(key, { flag: "" })}>Remove</button>}</div></div></div></div> : <h3 className="public-team-name"><TeamMark name={team.name} flag={team.flag} className="team-name-flag" />{team.name}</h3>}
         {activeAction && <div className="team-action-prompt"><span>{actionPrompt}, then click their name.</span><button type="button" onClick={() => setTeamRosterAction(null)}>Cancel</button></div>}
         <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{substitutes.length ? ` · ${starterIds.length} starters` : ""}{average !== null ? ` · ${substitutes.length ? "Starting avg" : "Avg"} ${average} OVR` : ""}</p>
         <p className="formation-label">Formation: {formationLabel(Object.fromEntries(Object.entries(team.positions).filter(([id]) => starterIds.includes(id))))}{substitutes.length ? ` · ${substitutes.length} substitute${substitutes.length === 1 ? "" : "s"}` : ""}</p>
-        <div className="roster-list">{roster.map((item) => { const isSubstitute = substitutes.includes(item.id); return RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), flagOverride: team.flag || null, flagLabel: team.name, rowKey: item.id, selecting: Boolean(activeAction), onPlayerClick: activeAction ? () => applyTeamAction(key, item.id) : undefined, children: unlocked ? <><span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></> : <span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span> }); })}</div>
+        <div className="roster-list">{roster.map((item) => { const isSubstitute = substitutes.includes(item.id); return RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), flagOverride: team.flag || null, flagLabel: team.name, rowKey: item.id, selecting: Boolean(activeAction) && !teamEditingLocked, onPlayerClick: activeAction && !teamEditingLocked ? () => applyTeamAction(key, item.id) : undefined, children: unlocked && !teamEditingLocked ? <><span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></> : <span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span> }); })}</div>
       </div>;
     };
 
     return <>
-      {unlocked ? <div className="sec"><h2>Set up two teams</h2><p className="note">Choose two captains, then balance every active player by base OVR only. Positions are optimized separately after both rosters are fixed.</p>
+      {unlocked && !teamEditingLocked ? <div className="sec"><h2>Set up two teams</h2><p className="note">Choose two captains, then balance every active player by base OVR only. Positions are optimized separately after both rosters are fixed.</p>
         {active.length % 2 === 1 && active.length > 1 && <p className="note">Auto-pick keeps the extra player on the field and gives stronger players to the smaller team to balance combined OVR. Benching stays optional and can be done later by the admin.</p>}
         <div className="row2 captain-selects"><div><label htmlFor="captain-one">Team 1 captain</label><select id="captain-one" value={captain1} disabled={Boolean(saved)} onChange={(event) => setPickCaptain(event.target.value)}><option value="">Choose captain…</option>{sortPlayers(active).filter((item) => item.id !== captain2).map((item) => <option value={item.id} key={item.id}>{item.name} ({ratingLabel(item)})</option>)}</select></div><div><label htmlFor="captain-two">Team 2 captain</label><select id="captain-two" value={captain2} disabled={Boolean(saved)} onChange={(event) => setPickCaptainTwo(event.target.value)}><option value="">Choose captain…</option>{sortPlayers(active).filter((item) => item.id !== captain1).map((item) => <option value={item.id} key={item.id}>{item.name} ({ratingLabel(item)})</option>)}</select></div></div>
         {!saved ? <div className="button-row"><button className="b pri" disabled={active.length < 2} onClick={() => generateTeams(false)}>Auto-pick balanced teams</button><button className="b line" disabled={active.length < 2} onClick={startManualPick}>Pick manually</button></div> : <div className="button-row"><button className="b" onClick={() => generateTeams(true)}>Shuffle again</button><button className="b line" onClick={deleteTeams}>Delete generated teams</button></div>}
         {active.some((item) => displayedOverall(item) === null) && <p className="note">Unrated players use the squad average. Add ratings for a more accurate automatic split.</p>}
       </div> : !saved && <div className="sec"><h2>No teams yet</h2><p className="empty">An admin can log in and create the next two teams.</p></div>}
-      {saved && <div className="sec top-rule"><h2>{unlocked ? "Edit teams and positions" : "Teams"}</h2><p className="note">{unlocked ? "After OVR-balanced teams are chosen, positions maximize lineup OVR while covering goalkeeper, defence and attack. Captains stay on their selected side." : "View the current squads, formations and player cards."}</p>
+      {saved && <div className="sec top-rule"><h2>{unlocked && !teamEditingLocked ? "Edit teams and positions" : "Teams"}</h2><p className="note">{unlocked && !teamEditingLocked ? "You can edit teams until the match starts. Positions maximize lineup OVR while covering goalkeeper, defence and attack." : teamEditingLocked ? "The match has started, so teams and positions are locked." : "View the current squads, formations and player cards."}</p>
         {unassigned.length > 0 && <div className="draft-arena" aria-live="polite"><div className={`draft-captain draft-captain-left${draftTeam === "team1" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team1.captain)?.name || saved.team1.name}</strong><small>{draftTeam === "team1" ? "Picking now" : "Waiting"}</small></div><div className="draft-ball">⚽</div><div className={`draft-captain draft-captain-right${draftTeam === "team2" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team2.captain)?.name || saved.team2.name}</strong><small>{draftTeam === "team2" ? "Picking now" : "Waiting"}</small></div><p><strong>{draftCaptain?.name || saved[draftTeam].name}&apos;s turn</strong> · choose one player</p></div>}
         {balanceReady && <div className={`team-balance-status${teamsUnbalanced ? " is-warning" : " is-balanced"}`} role={teamsUnbalanced ? "alert" : "status"}>
           <strong>{teamsUnbalanced ? "Teams are not balanced" : "Teams are balanced"}</strong>
@@ -1945,7 +1982,7 @@ export default function SquadSheet() {
       : `Paused · ${formatMatchClock(elapsed)}`;
     const scorerLines = (teamNumber: 1 | 2) => Object.entries(match.ev.filter((goal) => (goal.team || 1) === teamNumber).reduce<Record<string, (number | null)[]>>((result, goal) => { (result[goal.s] ||= []).push(goal.m); return result; }, {}));
     const balancedTeamFor = (teamNumber: 1 | 2) => teamNumber === 1 ? state.balancedTeams?.team1 : state.balancedTeams?.team2;
-    const rosterIdsFor = (teamNumber: 1 | 2) => teamNumber === 1 ? state.team?.ids || [] : state.balancedTeams?.team2.ids || [];
+    const rosterIdsFor = (teamNumber: 1 | 2) => balancedTeamFor(teamNumber)?.ids || (teamNumber === 1 ? state.team?.ids || [] : []);
     const substituteIdsFor = (teamNumber: 1 | 2) => balancedTeamFor(teamNumber)?.substitutes || [];
     const onFieldIdsFor = (teamNumber: 1 | 2) => rosterIdsFor(teamNumber).filter((id) => !substituteIdsFor(teamNumber).includes(id));
     const scoringIds = onFieldIdsFor(goalTeam);
@@ -1960,8 +1997,24 @@ export default function SquadSheet() {
       setClockNow(now);
       setState((current) => ({
         ...current,
+        team: current.balancedTeams ? { ids: [...current.balancedTeams.team1.ids], captain: current.balancedTeams.team1.captain } : current.team,
         match: { ...current.match, startedAt: now, timerStartedAt: now, elapsedSeconds: 0, halfTimeTaken: false, pauseReason: "" },
-        payments: current.payments.map((payment) => payment.matchId === current.match.id ? { ...payment, matchDate: new Date(now).toISOString(), team1Name: current.match.us, team2Name: current.match.opp } : payment),
+        payments: current.payments.map((payment) => {
+          if (payment.matchId !== current.match.id) return payment;
+          const rosterIds = current.balancedTeams ? [...current.balancedTeams.team1.ids, ...current.balancedTeams.team2.ids] : current.team?.ids || [];
+          const rosterKey = paymentRosterKey(rosterIds);
+          const participants = payment.rosterKey === rosterKey
+            ? payment.participants
+            : paymentParticipants(rosterIds, current.players).map((participant) => ({ ...participant, paidAt: payment.participants.find((saved) => saved.id === participant.id)?.paidAt }));
+          return {
+            ...payment,
+            matchDate: new Date(now).toISOString(),
+            team1Name: current.match.us,
+            team2Name: current.match.opp,
+            rosterKey,
+            participants,
+          };
+        }),
       }));
     };
     const deleteUnstartedMatch = () => {
@@ -2167,10 +2220,11 @@ export default function SquadSheet() {
     setState((current) => {
       const existingPayment = current.payments.find((payment) => payment.matchId === matchId);
       const participants = [...entry.team1.players, ...entry.team2.players].map((item) => ({ id: item.id, name: item.name }));
-      const payment: MatchPayment = existingPayment
-        ? { ...existingPayment, matchDate: entry.startedAt || entry.endedAt, team1Name: entry.team1.name, team2Name: entry.team2.name, participants: participants.map((participant) => ({ ...participant, paidAt: existingPayment.participants.find((item) => item.id === participant.id)?.paidAt })) }
-        : { matchId, createdAt: entry.endedAt, matchDate: entry.startedAt || entry.endedAt, team1Name: entry.team1.name, team2Name: entry.team2.name, totalExpense: 0, participants };
-      return { ...current, team: null, sub: "history", match: newMatch(current.match), history: [entry, ...current.history].slice(0, 100), payments: [payment, ...current.payments.filter((item) => item.matchId !== matchId)].slice(0, 100) };
+      const rosterKey = paymentRosterKey(participants.map((participant) => participant.id));
+      const payments = existingPayment
+        ? [{ ...existingPayment, matchDate: entry.startedAt || entry.endedAt, team1Name: entry.team1.name, team2Name: entry.team2.name, rosterKey, participants: existingPayment.rosterKey === rosterKey ? existingPayment.participants : participants.map((participant) => ({ ...participant, paidAt: existingPayment.participants.find((item) => item.id === participant.id)?.paidAt })) }, ...current.payments.filter((item) => item.matchId !== matchId)].slice(0, 100)
+        : current.payments;
+      return { ...current, team: null, sub: "history", match: newMatch(current.match), history: [entry, ...current.history].slice(0, 100), payments };
     });
   }
 
@@ -2190,9 +2244,15 @@ export default function SquadSheet() {
     if (!unlocked || !state.team) return null;
     const updateMatch = (patch: Partial<Match>) => setState((current) => {
       const match = { ...current.match, ...patch };
+      const balancedTeams = current.balancedTeams && !current.match.startedAt && (typeof patch.us === "string" || typeof patch.opp === "string") ? {
+        ...current.balancedTeams,
+        team1: typeof patch.us === "string" ? { ...current.balancedTeams.team1, name: patch.us } : current.balancedTeams.team1,
+        team2: typeof patch.opp === "string" ? { ...current.balancedTeams.team2, name: patch.opp } : current.balancedTeams.team2,
+      } : current.balancedTeams;
       return {
         ...current,
         match,
+        balancedTeams,
         payments: current.payments.map((payment) => payment.matchId === current.match.id ? {
           ...payment,
           team1Name: match.us,
@@ -2202,7 +2262,7 @@ export default function SquadSheet() {
       };
     });
     const allIds = [...new Set([...state.team.ids, ...(state.balancedTeams?.team2.ids || [])])];
-    return <div className="sec"><h2>Match settings</h2><div className="row2"><div><label htmlFor="tn">Team 1 name</label><input id="tn" value={state.match.us} onChange={(e) => updateMatch({ us: e.target.value })} /></div><div><label htmlFor="on">Team 2 name</label><input id="on" value={state.match.opp} onChange={(e) => updateMatch({ opp: e.target.value })} /></div></div><label htmlFor="mo">Man of the match</label><select id="mo" value={state.match.motm} onChange={(e) => updateMatch({ motm: e.target.value })}><option value="">Automatic</option>{allIds.map((id) => <option value={id} key={id}>{player(id)?.name}</option>)}</select>
+    return <div className="sec"><h2>Match settings</h2><div className="row2"><div><label htmlFor="tn">Team 1 name</label><input id="tn" value={state.match.us} disabled={Boolean(state.match.startedAt)} onChange={(e) => updateMatch({ us: e.target.value })} /></div><div><label htmlFor="on">Team 2 name</label><input id="on" value={state.match.opp} disabled={Boolean(state.match.startedAt)} onChange={(e) => updateMatch({ opp: e.target.value })} /></div></div>{state.match.startedAt && <p className="note">Team names and lineups are locked because the match has started.</p>}<label htmlFor="mo">Man of the match</label><select id="mo" value={state.match.motm} onChange={(e) => updateMatch({ motm: e.target.value })}><option value="">Automatic</option>{allIds.map((id) => <option value={id} key={id}>{player(id)?.name}</option>)}</select>
       {!state.match.startedAt && <><label htmlFor="edit-kickoff">Scheduled kickoff (leave empty for ready now)</label><input id="edit-kickoff" type="datetime-local" value={datetimeLocalValue(state.match.scheduledFor)} onChange={(event) => updateMatch({ scheduledFor: event.target.value ? new Date(event.target.value).toISOString() : undefined })} /></>}
       <div className="button-row">{state.match.st === "Live" && state.match.startedAt && <button className="b pri" onClick={endCurrentMatch}>End & save match</button>}<button className="b line" onClick={() => { if (!window.confirm("Delete the current match? Saved history will be kept.")) return; setShowGoal(false); setMatchEventEditor(""); setState((current) => ({ ...current, team: null, match: newMatch(), payments: current.payments.filter((payment) => payment.matchId !== current.match.id), tab: "team", sub: "timeline" })); }}>Delete current match</button></div></div>;
   }
@@ -2213,6 +2273,30 @@ export default function SquadSheet() {
       payments: current.payments.map((payment) => payment.matchId === matchId ? updater(payment) : payment),
     }));
     const addPayment = (payment: MatchPayment) => setState((current) => current.payments.some((item) => item.matchId === payment.matchId) ? current : { ...current, payments: [payment, ...current.payments].slice(0, 100) });
+    const currentMatchNeedsPayment = Boolean(state.team?.ids.length && state.match.id && !state.payments.some((payment) => payment.matchId === state.match.id));
+    const currentMatchRosterIds = state.balancedTeams ? [...state.balancedTeams.team1.ids, ...state.balancedTeams.team2.ids] : state.team?.ids || [];
+    const currentMatchParticipants = paymentParticipants(currentMatchRosterIds, state.players);
+    const createCurrentMatchPayment = (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!state.team || !state.match.id) return;
+      const data = new FormData(event.currentTarget);
+      const selectedIds = data.getAll("currentParticipant").map(String);
+      const totalExpense = Math.max(0, Number(data.get("currentExpense")) || 0);
+      if (!selectedIds.length) { window.alert("Select at least one player."); return; }
+      if (totalExpense <= 0) { window.alert("Enter the total match expense first."); return; }
+      const createdAt = new Date(paymentNow).toISOString();
+      addPayment({
+        matchId: state.match.id,
+        createdAt,
+        matchDate: state.match.startedAt ? new Date(state.match.startedAt).toISOString() : state.match.scheduledFor || createdAt,
+        team1Name: state.match.us,
+        team2Name: state.match.opp,
+        totalExpense,
+        participants: paymentParticipants(selectedIds, state.players),
+        rosterKey: paymentRosterKey(currentMatchRosterIds),
+      });
+      setShowCurrentPaymentForm(false);
+    };
     const createManualPayment = (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       const form = event.currentTarget;
@@ -2244,31 +2328,6 @@ export default function SquadSheet() {
       if (!window.confirm(`Delete the payment record for ${payment.team1Name} vs ${payment.team2Name}? This will not delete the match itself.`)) return;
       setState((current) => ({ ...current, payments: current.payments.filter((item) => item.matchId !== payment.matchId) }));
     };
-    const currentMatchMissing = Boolean(state.team?.ids.length && state.match.id && !state.payments.some((payment) => payment.matchId === state.match.id));
-    const historyWithoutPayments = state.history.filter((entry) => !state.payments.some((payment) => payment.matchId === entry.id));
-    const createCurrentPayment = () => {
-      if (!state.team || !state.match.id) return;
-      const ids = [...state.team.ids, ...(state.balancedTeams?.team2.ids || [])];
-      const createdAt = new Date(paymentNow).toISOString();
-      addPayment({
-        matchId: state.match.id,
-        createdAt,
-        matchDate: state.match.startedAt ? new Date(state.match.startedAt).toISOString() : state.match.scheduledFor || createdAt,
-        team1Name: state.match.us,
-        team2Name: state.match.opp,
-        totalExpense: 0,
-        participants: paymentParticipants(ids, state.players),
-      });
-    };
-    const createHistoryPayment = (entry: MatchHistoryEntry) => addPayment({
-      matchId: entry.id,
-      createdAt: entry.endedAt,
-      matchDate: entry.startedAt || entry.scheduledFor || entry.endedAt,
-      team1Name: entry.team1.name,
-      team2Name: entry.team2.name,
-      totalExpense: 0,
-      participants: [...new Map([...entry.team1.players, ...entry.team2.players].map((item) => [item.id, { id: item.id, name: item.name }])).values()],
-    });
     const records = [...state.payments].sort((a, b) => Date.parse(b.matchDate) - Date.parse(a.matchDate));
     const recordShare = (payment: MatchPayment) => payment.participants.length ? payment.totalExpense / payment.participants.length : 0;
     const totalExpenses = records.reduce((sum, payment) => sum + payment.totalExpense, 0);
@@ -2291,16 +2350,29 @@ export default function SquadSheet() {
       const overdueCount = payment.participants.filter((participant) => paymentIsOverdue(payment, participant, paymentNow)).length;
       const dueAt = paymentDueAt(payment);
       const isCurrent = Boolean(state.team && state.match.id === payment.matchId);
-      const status = payment.totalExpense <= 0 ? "Expense not set" : !unpaidCount ? "Fully paid" : overdueCount ? `${overdueCount} overdue` : `${unpaidCount} unpaid`;
+      const selectedIds = new Set(payment.participants.map((participant) => participant.id));
+      const status = !payment.participants.length ? "No players" : payment.totalExpense <= 0 ? "Expense not set" : !unpaidCount ? "Fully paid" : overdueCount ? `${overdueCount} overdue` : `${unpaidCount} unpaid`;
       return <article className={`payment-card${overdueCount ? " has-overdue" : ""}`} key={payment.matchId}>
-        <header className="payment-card-head"><div><span>{isCurrent ? "Current match" : "Match payment"}</span><h2>{payment.team1Name} <i>vs</i> {payment.team2Name}</h2><p>{new Date(payment.matchDate).toLocaleString()} · Due {new Date(dueAt).toLocaleString()}</p></div><div className="payment-card-head-actions"><strong className={overdueCount ? "is-overdue" : paidCount === payment.participants.length && payment.totalExpense > 0 ? "is-paid" : ""}>{status}</strong>{unlocked && <button type="button" className="b line danger sm" onClick={() => deletePayment(payment)}>Delete</button>}</div></header>
+        <header className="payment-card-head"><div><span>{isCurrent ? "Current match" : "Match payment"}</span><h2>{payment.team1Name} <i>vs</i> {payment.team2Name}</h2><p>{new Date(payment.matchDate).toLocaleString()} · Due {new Date(dueAt).toLocaleString()}</p></div><div className="payment-card-head-actions"><strong className={overdueCount ? "is-overdue" : payment.participants.length > 0 && paidCount === payment.participants.length && payment.totalExpense > 0 ? "is-paid" : ""}>{status}</strong></div></header>
         <div className="payment-totals">
-          <div>{unlocked ? <><label htmlFor={`payment-total-${payment.matchId}`}>Total expense ({PAYMENT_CURRENCY})</label><input id={`payment-total-${payment.matchId}`} type="number" min="0" step="0.01" inputMode="decimal" value={payment.totalExpense || ""} placeholder="0.00" onChange={(event) => updatePayment(payment.matchId, (current) => ({ ...current, totalExpense: Math.max(0, Number(event.target.value) || 0) }))} /></> : <><small>Total expense</small><strong>{paymentAmount(payment.totalExpense)}</strong></>}</div>
+          <div><small>Total expense</small><strong>{paymentAmount(payment.totalExpense)}</strong></div>
           <div><small>Players</small><strong>{payment.participants.length}</strong></div>
           <div><small>Each player</small><strong>{payment.totalExpense > 0 ? paymentAmount(share) : "Not set"}</strong></div>
           <div><small>Collected</small><strong>{paymentAmount(share * paidCount)}</strong></div>
         </div>
-        {unlocked && payment.totalExpense > 0 && <div className="payment-bulk-actions"><button type="button" className="b line sm" onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map((participant) => ({ ...participant, paidAt: participant.paidAt || new Date().toISOString() })) }))}>Mark all paid</button><button type="button" className="b line sm" onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map(({ paidAt: _paidAt, ...participant }) => participant) }))}>Mark all unpaid</button></div>}
+        {unlocked && <details className="payment-manage">
+          <summary>Manage payment</summary>
+          <div className="payment-manage-body">
+            <div className="payment-manual-fields">
+              <div><label htmlFor={`payment-team-1-${payment.matchId}`}>Team 1</label><input id={`payment-team-1-${payment.matchId}`} value={payment.team1Name} onChange={(event) => updatePayment(payment.matchId, (current) => ({ ...current, team1Name: event.target.value }))} /></div>
+              <div><label htmlFor={`payment-team-2-${payment.matchId}`}>Team 2</label><input id={`payment-team-2-${payment.matchId}`} value={payment.team2Name} onChange={(event) => updatePayment(payment.matchId, (current) => ({ ...current, team2Name: event.target.value }))} /></div>
+              <div><label htmlFor={`payment-date-${payment.matchId}`}>Match date</label><input id={`payment-date-${payment.matchId}`} type="datetime-local" value={datetimeLocalValue(payment.matchDate)} onChange={(event) => { const parsed = Date.parse(event.target.value); if (Number.isFinite(parsed)) updatePayment(payment.matchId, (current) => ({ ...current, matchDate: new Date(parsed).toISOString() })); }} /></div>
+              <div><label htmlFor={`payment-total-${payment.matchId}`}>Total expense ({PAYMENT_CURRENCY})</label><input id={`payment-total-${payment.matchId}`} type="number" min="0" step="0.01" inputMode="decimal" value={payment.totalExpense || ""} placeholder="0.00" onChange={(event) => updatePayment(payment.matchId, (current) => ({ ...current, totalExpense: Math.max(0, Number(event.target.value) || 0) }))} /></div>
+            </div>
+            <fieldset className="payment-participant-picker"><legend>Players included</legend><div>{[...state.players].sort((a, b) => Number(selectedIds.has(b.id)) - Number(selectedIds.has(a.id)) || a.name.localeCompare(b.name)).map((item) => <label key={item.id}><input type="checkbox" checked={selectedIds.has(item.id)} onChange={(event) => { const included = event.target.checked; updatePayment(payment.matchId, (current) => ({ ...current, participants: included ? [...current.participants, { id: item.id, name: item.name }] : current.participants.filter((participant) => participant.id !== item.id) })); }} /><span className="payment-avatar">{initials(item.name)}</span><strong>{item.name}</strong></label>)}</div></fieldset>
+            <div className="payment-manage-actions">{payment.totalExpense > 0 && <><button type="button" className="b line sm" onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map((participant) => ({ ...participant, paidAt: participant.paidAt || new Date().toISOString() })) }))}>Mark everyone paid</button><button type="button" className="b line sm" onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map(({ paidAt: _paidAt, ...participant }) => participant) }))}>Mark everyone unpaid</button></>}<button type="button" className="b line danger sm" onClick={() => deletePayment(payment)}>Delete payment</button></div>
+          </div>
+        </details>}
         <div className="payment-player-list">{payment.participants.map((participant) => {
           const overdue = paymentIsOverdue(payment, participant, paymentNow);
           const previousOverdue = records.filter((item) => item.matchId !== payment.matchId).reduce((sum, item) => {
@@ -2324,8 +2396,9 @@ export default function SquadSheet() {
         <article><span>Collected</span><strong>{paymentAmount(totalPaid)}</strong><small>Marked paid manually</small></article>
         <article className={overduePlayers.length ? "has-overdue" : ""}><span>Outstanding</span><strong>{paymentAmount(totalOutstanding)}</strong><small>{overduePlayers.length} player{overduePlayers.length === 1 ? "" : "s"} overdue</small></article>
       </div>
+      {unlocked && currentMatchNeedsPayment && <div className="sec payment-current-match"><div className="payment-current-match-head"><div><span>Hosted match</span><strong>{state.match.us} vs {state.match.opp}</strong><small>{state.match.startedAt ? new Date(state.match.startedAt).toLocaleString() : state.match.scheduledFor ? new Date(state.match.scheduledFor).toLocaleString() : "Ready to start"} · {currentMatchParticipants.length} players</small></div><button type="button" className={`b ${showCurrentPaymentForm ? "line" : "pri"}`} onClick={() => setShowCurrentPaymentForm((open) => !open)}>{showCurrentPaymentForm ? "Cancel" : "Add payment for this match"}</button></div>{showCurrentPaymentForm && <form className="payment-current-form" key={state.match.id} onSubmit={createCurrentMatchPayment}><div><label htmlFor="current-match-expense">Total match expense ({PAYMENT_CURRENCY})</label><input id="current-match-expense" name="currentExpense" type="number" min="0.01" step="0.01" inputMode="decimal" placeholder="Enter total expense" autoFocus required /></div><fieldset className="payment-participant-picker"><legend>Players sharing this expense</legend><p className="note">Filled from the currently hosted teams. Uncheck only someone who will not participate.</p><div>{currentMatchParticipants.map((item) => <label key={item.id}><input type="checkbox" name="currentParticipant" value={item.id} defaultChecked /><span className="payment-avatar">{initials(item.name)}</span><strong>{item.name}</strong></label>)}</div></fieldset><button type="submit" className="b pri">Save payment</button></form>}</div>}
       {unlocked && <details className="sec payment-manual">
-        <summary><span><strong>Add a past match payment</strong><small>For a match that was played before payment tracking was added</small></span><b>＋</b></summary>
+        <summary><span><strong>Add a past match manually</strong><small>Use only when the match was not hosted in this app</small></span><b>＋</b></summary>
         <form onSubmit={createManualPayment}>
           <div className="payment-manual-fields">
             <div><label htmlFor="manual-payment-team-1">Team 1 name</label><input id="manual-payment-team-1" name="team1Name" defaultValue="Team Alpha" required /></div>
@@ -2334,11 +2407,10 @@ export default function SquadSheet() {
             <div><label htmlFor="manual-payment-expense">Total expense ({PAYMENT_CURRENCY})</label><input id="manual-payment-expense" name="totalExpense" type="number" min="0.01" step="0.01" inputMode="decimal" placeholder="0.00" required /></div>
           </div>
           <fieldset className="payment-participant-picker"><legend>Players who participated</legend><p className="note">Only selected players will share this expense.</p><div>{[...state.players].sort((a, b) => Number(b.on !== false) - Number(a.on !== false) || a.name.localeCompare(b.name)).map((item) => <label key={item.id}><input type="checkbox" name="participant" value={item.id} defaultChecked={item.on !== false} /><span className="payment-avatar">{initials(item.name)}</span><strong>{item.name}</strong>{item.on === false && <small>Inactive</small>}</label>)}</div></fieldset>
-          <button className="b pri" type="submit">Add payment record</button>
+          <button className="b pri" type="submit">Create payment</button>
         </form>
       </details>}
       {overduePlayers.length > 0 && <div className="sec payment-overdue-panel"><h2>Overdue payments</h2><p className="note">These fees have remained unpaid for at least three days after their match. Players stay eligible for future matches.</p><div>{overduePlayers.map(([id, debt]) => <div key={id}><span><strong>{debt.name}</strong><small>{debt.matches} overdue match{debt.matches === 1 ? "" : "es"}</small></span><b>{paymentAmount(debt.amount)}</b></div>)}</div></div>}
-      {unlocked && (currentMatchMissing || historyWithoutPayments.length > 0) && <div className="sec payment-import"><h2>Set up older match payments</h2><p className="note">Create records for matches that existed before payment tracking was added.</p>{currentMatchMissing && <button className="b pri" type="button" onClick={createCurrentPayment}>Set up current match payment</button>}{historyWithoutPayments.map((entry) => <div key={entry.id}><span>{entry.team1.name} vs {entry.team2.name} · {new Date(entry.endedAt).toLocaleDateString()}</span><button className="b line sm" type="button" onClick={() => createHistoryPayment(entry)}>Set up payment</button></div>)}</div>}
       <div className="payment-records">{records.length ? records.map(paymentCard) : <div className="sec"><div className="empty">Payment records appear here when an admin hosts a match.</div></div>}</div>
     </>;
   }

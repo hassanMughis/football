@@ -27,9 +27,7 @@ drop policy if exists "public settings read" on public.squad_settings;
 drop policy if exists "public settings write" on public.squad_settings;
 
 create policy "public players read" on public.players for select to anon using (true);
-create policy "public players write" on public.players for all to anon using (true) with check (true);
 create policy "public settings read" on public.squad_settings for select to anon using (true);
-create policy "public settings write" on public.squad_settings for all to anon using (true) with check (true);
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('player-images', 'player-images', true, 5242880, array['image/jpeg','image/png','image/webp','image/gif','application/json'])
@@ -42,12 +40,10 @@ drop policy if exists "public player images update" on storage.objects;
 drop policy if exists "public player images delete" on storage.objects;
 
 create policy "public player images read" on storage.objects for select to anon using (bucket_id = 'player-images');
-create policy "public player images upload" on storage.objects for insert to anon with check (bucket_id = 'player-images');
-create policy "public player images update" on storage.objects for update to anon using (bucket_id = 'player-images') with check (bucket_id = 'player-images');
-create policy "public player images delete" on storage.objects for delete to anon using (bucket_id = 'player-images');
 
-grant select, insert, update, delete on public.players, public.squad_settings to anon;
-grant usage, select on sequence public.players_id_seq to anon;
+grant select on public.players, public.squad_settings to anon;
+revoke insert, update, delete on public.players, public.squad_settings from anon, authenticated;
+revoke usage, update on sequence public.players_id_seq from anon, authenticated;
 
 -- Save the whole shared squad in one transaction. A failed insert rolls back
 -- the delete, so connection or validation errors cannot erase the old squad.
@@ -89,4 +85,5 @@ begin
 end;
 $$;
 revoke execute on function public.save_team_maker_squad(jsonb, text, text) from public;
-grant execute on function public.save_team_maker_squad(jsonb, text, text) to anon;
+revoke execute on function public.save_team_maker_squad(jsonb, text, text) from anon, authenticated;
+grant execute on function public.save_team_maker_squad(jsonb, text, text) to service_role;

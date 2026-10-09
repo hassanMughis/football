@@ -196,7 +196,8 @@ end;
 $$;
 
 revoke all on function public.save_cricket_players(jsonb) from public;
-grant execute on function public.save_cricket_players(jsonb) to anon, authenticated;
+revoke execute on function public.save_cricket_players(jsonb) from anon, authenticated;
+grant execute on function public.save_cricket_players(jsonb) to service_role;
 
 -- Preserve cricket players created before this dedicated table existed.
 do $$

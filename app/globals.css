@@ -312,17 +312,24 @@ table { width:100%; border-collapse:collapse; }th,td { padding:10px 4px; text-al
 .payment-summary-grid strong { overflow:hidden; font-size:20px; line-height:1.15; text-overflow:ellipsis; }
 .payment-summary-grid article.has-overdue strong { color:#ff817c; }
 .payment-summary-grid small { color:var(--mu); font-size:10px; }
+.payment-current-match { border-color:color-mix(in srgb,var(--acc) 58%,var(--line)); background:color-mix(in srgb,var(--acc) 8%,var(--s1)); }
+.payment-current-match-head { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.payment-current-match-head > div { display:grid; min-width:0; gap:2px; }
+.payment-current-match span { color:var(--acc); font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
+.payment-current-match strong { overflow:hidden; font-size:15px; text-overflow:ellipsis; white-space:nowrap; }
+.payment-current-match small { color:var(--mu); font-size:10px; }
+.payment-current-match-head .b { flex:0 0 auto; }
+.payment-current-form { margin-top:14px; padding-top:13px; border-top:1px solid color-mix(in srgb,var(--acc) 28%,var(--line)); }
+.payment-current-form > div:first-child { max-width:320px; }
+.payment-current-form > div:first-child label { margin-top:0; }
 .payment-overdue-panel { border-color:color-mix(in srgb,#ff625c 62%,var(--line)); background:color-mix(in srgb,#ff625c 7%,var(--s1)); }
-.payment-overdue-panel h2,.payment-import h2 { margin:0 0 4px; font-size:16px; }
+.payment-overdue-panel h2 { margin:0 0 4px; font-size:16px; }
 .payment-overdue-panel > div { margin-top:11px; border-top:1px solid color-mix(in srgb,#ff625c 30%,var(--line)); }
 .payment-overdue-panel > div > div { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 2px; border-bottom:1px solid color-mix(in srgb,#ff625c 22%,var(--line)); }
 .payment-overdue-panel > div > div:last-child { border-bottom:0; }
 .payment-overdue-panel span { display:grid; gap:2px; }
 .payment-overdue-panel strong,.payment-overdue-panel b { color:#ff817c; font-size:13px; }
 .payment-overdue-panel small { color:var(--mu); font-size:10px; }
-.payment-import { display:grid; gap:9px; }
-.payment-import > div { display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:8px; border-top:1px solid var(--line); color:var(--mu); font-size:11px; }
-.payment-import > .b { justify-self:start; }
 .payment-records { padding:0 12px 22px; }
 .payment-card { margin-bottom:12px; overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--s1); }
 .payment-card.has-overdue { border-color:color-mix(in srgb,#ff625c 65%,var(--line)); }
@@ -343,6 +350,14 @@ table { width:100%; border-collapse:collapse; }th,td { padding:10px 4px; text-al
 .payment-totals strong { overflow:hidden; font-size:14px; text-overflow:ellipsis; white-space:nowrap; }
 .payment-totals input { width:100%; margin:0; padding:8px 9px; font-size:13px; }
 .payment-bulk-actions { display:flex; justify-content:flex-end; gap:6px; padding:10px 14px 0; }
+.payment-manage { border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--acc) 3%,var(--s1)); }
+.payment-manage > summary { width:max-content; margin:10px 14px; padding:6px 11px; border:1px solid var(--line); border-radius:999px; color:var(--acc); font-size:11px; font-weight:700; cursor:pointer; list-style:none; }
+.payment-manage > summary::-webkit-details-marker { display:none; }
+.payment-manage > summary::before { content:"⚙"; margin-right:5px; }
+.payment-manage[open] > summary { border-color:color-mix(in srgb,var(--acc) 58%,var(--line)); background:color-mix(in srgb,var(--acc) 9%,transparent); }
+.payment-manage-body { padding:0 14px 13px; }
+.payment-manage-actions { display:flex; flex-wrap:wrap; gap:7px; }
+.payment-manage-actions .danger { margin-left:auto; }
 .payment-player-list { padding:7px 14px 12px; }
 .payment-player { display:grid; grid-template-columns:36px minmax(0,1fr) auto auto; align-items:center; gap:10px; min-width:0; padding:9px 4px; border-bottom:1px solid var(--line); }
 .payment-player:last-child { border-bottom:0; }
@@ -385,6 +400,6 @@ table { width:100%; border-collapse:collapse; }th,td { padding:10px 4px; text-al
 @media (max-width:350px) { .player-grid { grid-template-columns:1fr; } }
 @media (max-width:480px) { .substitution-players { grid-template-columns:1fr; }.incident-event-head { padding-inline:11px; }.goal-event-player { padding-inline:12px; }.formation-event-badges { right:-5px; }.match-event-editor .row2,.team-identity-fields,.history-team-stats { grid-template-columns:1fr; } }
 @media (max-width:640px) { .sync-status { flex-wrap:wrap; }.sync-status .sport-switch { order:3; width:100%; margin:2px 0 0; padding-block:6px; }.cricket-panel { padding:12px 10px 22px; }.cricket-hero { grid-template-columns:1fr; min-height:0; padding:24px 20px; }.cricket-emblem { width:180px; height:160px; justify-self:center; }.cricket-score-preview { grid-template-columns:1fr; text-align:center; }.cricket-score-preview > div:last-child { text-align:center; }.cricket-score-preview > span { grid-row:2; }.cricket-summary-grid,.cricket-team-grid,.cricket-player-selects { grid-template-columns:1fr; }.cricket-attribute-inputs { grid-template-columns:repeat(3,minmax(0,1fr)); }.cricket-run-buttons { grid-template-columns:repeat(4,minmax(0,1fr)); }.cricket-run-buttons .is-extra { min-height:42px; }.cricket-live-head { padding-top:20px; } }
-@media (max-width:640px) { .payment-summary-grid { grid-template-columns:1fr; }.payment-summary-grid article { grid-template-columns:1fr auto; align-items:center; }.payment-summary-grid article small { grid-column:1/-1; }.payment-totals { grid-template-columns:1fr 1fr; }.payment-totals > div:nth-child(2) { border-right:0; }.payment-totals > div:nth-child(-n+2) { border-bottom:1px solid var(--line); }.payment-card-head { align-items:stretch; flex-direction:column; }.payment-card-head-actions { justify-content:space-between; }.payment-player { grid-template-columns:36px minmax(0,1fr) auto; }.payment-player .b { grid-column:2/-1; justify-self:end; }.payment-import > div { align-items:flex-start; flex-direction:column; }.payment-manual-fields { grid-template-columns:1fr; }.payment-participant-picker > div { grid-template-columns:1fr 1fr; } }
+@media (max-width:640px) { .payment-summary-grid { grid-template-columns:1fr; }.payment-summary-grid article { grid-template-columns:1fr auto; align-items:center; }.payment-summary-grid article small { grid-column:1/-1; }.payment-current-match-head { align-items:stretch; flex-direction:column; }.payment-current-match-head .b { width:100%; }.payment-current-form > div:first-child { max-width:none; }.payment-totals { grid-template-columns:1fr 1fr; }.payment-totals > div:nth-child(2) { border-right:0; }.payment-totals > div:nth-child(-n+2) { border-bottom:1px solid var(--line); }.payment-card-head { align-items:stretch; flex-direction:column; }.payment-card-head-actions { justify-content:space-between; }.payment-player { grid-template-columns:36px minmax(0,1fr) auto; }.payment-player .b { grid-column:2/-1; justify-self:end; }.payment-manual-fields { grid-template-columns:1fr; }.payment-participant-picker > div { grid-template-columns:1fr 1fr; }.payment-manage-actions .danger { width:100%; margin-left:0; } }
 @media (max-width:400px) { .payment-participant-picker > div { grid-template-columns:1fr; } }
 @media (prefers-reduced-motion:no-preference) { .b,.tabs button { transition:background .15s; } }

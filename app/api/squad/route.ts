@@ -1,4 +1,5 @@
 import { supabaseRest } from "@/lib/supabase-rest";
+import { isAdmin } from "@/lib/admin-auth";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +40,7 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  if (!await isAdmin()) return Response.json({ error: "Admin login required." }, { status: 401 });
   try {
     const parsed = squadInput.safeParse(await request.json());
     if (!parsed.success) return Response.json({ error: "Check the player names, ratings and team names, then try again." }, { status: 400 });

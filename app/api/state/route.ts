@@ -165,7 +165,7 @@ function validateAndEnrichState(value: unknown) {
 }
 
 async function readStorageState() {
-  const config = getSupabaseConfig();
+  const config = getSupabaseConfig("public");
   const response = await fetch(`${config.url}/storage/v1/object/${stateObjectPath}`, {
     headers: { apikey: config.key },
     cache: "no-store",
@@ -185,7 +185,7 @@ async function writeStorageState(state: JsonObject) {
   const config = getSupabaseConfig();
   const response = await fetch(`${config.url}/storage/v1/object/${stateObjectPath}`, {
     method: "POST",
-    headers: { apikey: config.key, "content-type": "image/png", "x-upsert": "true" },
+    headers: { apikey: config.key, "content-type": "application/json", "x-upsert": "true" },
     body: JSON.stringify(state),
     cache: "no-store",
   });

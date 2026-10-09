@@ -128,16 +128,16 @@ alter table public.match_events enable row level security;
 drop policy if exists "public match events read" on public.match_events;
 drop policy if exists "public match events write" on public.match_events;
 create policy "public match events read" on public.match_events for select to anon using (true);
-create policy "public match events write" on public.match_events for all to anon using (true) with check (true);
-grant select, insert, update, delete on public.match_events to anon;
-grant usage, select on sequence public.match_events_id_seq to anon;
+grant select on public.match_events to anon;
+revoke insert, update, delete on public.match_events from anon, authenticated;
+revoke usage, update on sequence public.match_events_id_seq from anon, authenticated;
 
 alter table public.match_history enable row level security;
 drop policy if exists "public match history read" on public.match_history;
 drop policy if exists "public match history write" on public.match_history;
 create policy "public match history read" on public.match_history for select to anon using (true);
-create policy "public match history write" on public.match_history for all to anon using (true) with check (true);
-grant select, insert, update, delete on public.match_history to anon;
+grant select on public.match_history to anon;
+revoke insert, update, delete on public.match_history from anon, authenticated;
 
 create or replace function public.set_player_updated_at()
 returns trigger language plpgsql as $$
@@ -305,7 +305,8 @@ end;
 $$;
 
 revoke execute on function public.save_squad_sheet_state(jsonb) from public;
-grant execute on function public.save_squad_sheet_state(jsonb) to anon;
+revoke execute on function public.save_squad_sheet_state(jsonb) from anon, authenticated;
+grant execute on function public.save_squad_sheet_state(jsonb) to service_role;
 
 -- The browser listens only to this single canonical state row. The block is
 -- safe to rerun and avoids polling the API for public/view-only updates.
