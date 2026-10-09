@@ -760,7 +760,8 @@ type BalanceCandidate = { first: BalanceItem[]; second: BalanceItem[]; cost: num
 const BALANCE_WEIGHTS: BalanceVector = [1];
 const BALANCE_SCALES: BalanceVector = [1];
 const FALLBACK_BALANCE_VECTOR: BalanceVector = [75];
-const COMBINED_OVR_BALANCE_LIMIT = 2;
+const COMBINED_OVR_BALANCE_LIMIT = 3;
+const AVERAGE_OVR_BALANCE_LIMIT = 1.5;
 
 const numericBalanceVector = (player: Player): BalanceVector | null => {
   const overall = displayedOverall(player);
@@ -1635,7 +1636,9 @@ export default function SquadSheet() {
     const playerCountGap = Math.abs(team1Overall.count - team2Overall.count);
     const combinedOverallGap = Math.round(Math.abs(team1Overall.total - team2Overall.total) * 10) / 10;
     const balanceReady = unassigned.length === 0 && averageGap !== null && team1Overall.count > 0 && team2Overall.count > 0;
-    const teamsUnbalanced = balanceReady && combinedOverallGap >= COMBINED_OVR_BALANCE_LIMIT;
+    const teamsUnbalanced = balanceReady && (playerCountGap > 0
+      ? combinedOverallGap > COMBINED_OVR_BALANCE_LIMIT
+      : averageGap > AVERAGE_OVR_BALANCE_LIMIT);
     const strongerTeamName = saved && balanceReady
       ? team1Overall.total >= team2Overall.total ? saved.team1.name || "Team 1" : saved.team2.name || "Team 2"
       : "";
@@ -1835,8 +1838,8 @@ export default function SquadSheet() {
           <span>{saved.team1.name || "Team 1"}: {team1Overall.count} starters · {team1Overall.total.toFixed(1)} combined OVR · {team1Average?.toFixed(1)} average OVR.</span>
           <span>{saved.team2.name || "Team 2"}: {team2Overall.count} starters · {team2Overall.total.toFixed(1)} combined OVR · {team2Average?.toFixed(1)} average OVR.</span>
           <span>Difference: {playerCountGap} player{playerCountGap === 1 ? "" : "s"} · {combinedOverallGap.toFixed(1)} combined OVR · {averageGap?.toFixed(1)} average OVR.</span>
-          {teamsUnbalanced && <span>{strongerTeamName} has {combinedOverallGap.toFixed(1)} more combined OVR. Move stronger players to {weakerTeamName} or swap players until the totals are closer.{playerCountGap > 0 ? " The smaller team needs higher-OVR players to compensate for having fewer players." : ""}</span>}
-          <details className="team-balance-info"><summary aria-label="Show team balance rule"><span aria-hidden="true">ⓘ</span> Balance rule</summary><p>Balance is based on the starting lineups&apos; combined OVR. With an odd number of players, the smaller team receives higher-rated players to compensate. A combined OVR difference below {COMBINED_OVR_BALANCE_LIMIT.toFixed(1)} is balanced.</p></details>
+          {teamsUnbalanced && <span>{playerCountGap > 0 ? `${strongerTeamName} has ${combinedOverallGap.toFixed(1)} more combined OVR. Move stronger players to ${weakerTeamName} or swap players until the combined difference is ${COMBINED_OVR_BALANCE_LIMIT.toFixed(1)} or less. The smaller team needs higher-OVR players to compensate for having fewer players.` : `${strongerTeamName} has an average OVR advantage of ${averageGap?.toFixed(1)}. Move stronger players to ${weakerTeamName} or swap players until the average difference is ${AVERAGE_OVR_BALANCE_LIMIT.toFixed(1)} or less.`}</span>}
+          <details className="team-balance-info"><summary aria-label="Show team balance rule"><span aria-hidden="true">ⓘ</span> Balance rule</summary><p>When player counts differ, a combined OVR difference of up to {COMBINED_OVR_BALANCE_LIMIT.toFixed(1)} is allowed. When both teams have the same number of starters, an average OVR difference of up to {AVERAGE_OVR_BALANCE_LIMIT.toFixed(1)} is allowed.</p></details>
         </div>}
         <div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>
         {FormationBoard(true)}
