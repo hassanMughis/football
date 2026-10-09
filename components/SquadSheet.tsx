@@ -2273,12 +2273,12 @@ export default function SquadSheet() {
       payments: current.payments.map((payment) => payment.matchId === matchId ? updater(payment) : payment),
     }));
     const addPayment = (payment: MatchPayment) => setState((current) => current.payments.some((item) => item.matchId === payment.matchId) ? current : { ...current, payments: [payment, ...current.payments].slice(0, 100) });
-    const currentMatchNeedsPayment = Boolean(state.team?.ids.length && state.match.id && !state.payments.some((payment) => payment.matchId === state.match.id));
     const currentMatchRosterIds = state.balancedTeams ? [...state.balancedTeams.team1.ids, ...state.balancedTeams.team2.ids] : state.team?.ids || [];
+    const currentMatchNeedsPayment = Boolean(currentMatchRosterIds.length && state.match.id && !state.payments.some((payment) => payment.matchId === state.match.id));
     const currentMatchParticipants = paymentParticipants(currentMatchRosterIds, state.players);
     const createCurrentMatchPayment = (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      if (!state.team || !state.match.id) return;
+      if (!state.match.id || !currentMatchRosterIds.length) return;
       const data = new FormData(event.currentTarget);
       const selectedIds = data.getAll("currentParticipant").map(String);
       const totalExpense = Math.max(0, Number(data.get("currentExpense")) || 0);
