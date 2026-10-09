@@ -1,6 +1,7 @@
 import { getSupabaseConfig, supabaseRest } from "@/lib/supabase-rest";
 import { isAdmin } from "@/lib/admin-auth";
 import { cricketOverall, cricketStats, restoreCricketState } from "@/lib/cricket";
+import { cleanupUnusedManagedImages } from "@/lib/storage-images";
 
 export const dynamic = "force-dynamic";
 
@@ -363,12 +364,14 @@ export async function PUT(request: Request) {
         method: "POST",
         body: JSON.stringify({ p_state: databaseState }),
       });
+      await cleanupUnusedManagedImages(state).catch(() => null);
       return Response.json({ state, source: "database" });
     } catch {
       // Keep the app usable while the rich-table migration is pending or if a
       // database policy/function is temporarily unavailable. Storage is still
       // Supabase-backed and the next successful save will populate the tables.
       await writeStorageState(state);
+      await cleanupUnusedManagedImages(state).catch(() => null);
       return Response.json({ state, source: "storage" });
     }
   } catch (error) {
