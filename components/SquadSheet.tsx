@@ -760,6 +760,7 @@ type BalanceCandidate = { first: BalanceItem[]; second: BalanceItem[]; cost: num
 const BALANCE_WEIGHTS: BalanceVector = [1];
 const BALANCE_SCALES: BalanceVector = [1];
 const FALLBACK_BALANCE_VECTOR: BalanceVector = [75];
+const COMBINED_OVR_BALANCE_LIMIT = 2;
 
 const numericBalanceVector = (player: Player): BalanceVector | null => {
   const overall = displayedOverall(player);
@@ -809,12 +810,12 @@ const vectorTotal = (items: BalanceItem[]) => {
   return total;
 };
 
-const balanceCost = (first: BalanceVector, firstCount: number, second: BalanceVector, secondCount: number) => {
+const balanceCost = (first: BalanceVector, second: BalanceVector) => {
   let weightedDifference = 0;
   let totalWeight = 0;
   let largestDifference = 0;
   for (let feature = 0; feature < first.length; feature++) {
-    const difference = Math.abs(first[feature] / firstCount - second[feature] / secondCount) / BALANCE_SCALES[feature];
+    const difference = Math.abs(first[feature] - second[feature]) / BALANCE_SCALES[feature];
     weightedDifference += BALANCE_WEIGHTS[feature] * difference * difference;
     totalWeight += BALANCE_WEIGHTS[feature];
     largestDifference = Math.max(largestDifference, difference);
@@ -833,7 +834,7 @@ const improveBalance = (firstSeed: BalanceItem[], secondSeed: BalanceItem[], loc
   let second = [...secondSeed];
   const firstTotal = vectorTotal(first);
   const secondTotal = vectorTotal(second);
-  let cost = balanceCost(firstTotal, first.length, secondTotal, second.length);
+  let cost = balanceCost(firstTotal, secondTotal);
   const maxPasses = Math.min(48, first.length * second.length);
 
   for (let pass = 0; pass < maxPasses; pass++) {
@@ -851,7 +852,7 @@ const improveBalance = (firstSeed: BalanceItem[], secondSeed: BalanceItem[], loc
           nextFirst[feature] += change;
           nextSecond[feature] -= change;
         }
-        const nextCost = balanceCost(nextFirst, first.length, nextSecond, second.length);
+        const nextCost = balanceCost(nextFirst, nextSecond);
         if (nextCost < bestCost - 1e-10) {
           bestCost = nextCost;
           bestFirst = firstIndex;
@@ -1581,7 +1582,7 @@ export default function SquadSheet() {
     const balancedSection = <div className="sec">
       <h2>Balanced two-team match</h2>
       <p className="note">Generate two sides using rating plus PAC, SHO, PAS, DRI, DEF and PHY. Every active player is included.</p>
-      {active.length % 2 === 1 && active.length > 1 && <p className="note">There is an odd number of active players, so Team 1 will have one extra player.</p>}
+      {active.length % 2 === 1 && active.length > 1 && <p className="note">There is an odd number of active players. The smaller team receives stronger players to keep both combined OVR totals as close as possible.</p>}
       {active.some((item) => displayedOverall(item) === null) && <p className="note">Unrated players use the rated squad average for balancing. Rate them for a more accurate split.</p>}
       <div className="button-row">
         <button className="b pri" disabled={active.length < 2} onClick={() => generateBalance(false)}>Generate teams</button>
@@ -1617,19 +1618,30 @@ export default function SquadSheet() {
     const draftTeam: "team1" | "team2" = saved && Math.max(0, saved.team1.ids.length + saved.team2.ids.length - 2) % 2 === 1 ? "team2" : "team1";
     const draftCaptain = saved ? player(saved[draftTeam].captain) : undefined;
     const previousSignature = saved ? [[...saved.team1.ids].sort().join("|"), [...saved.team2.ids].sort().join("|")].sort().join("::") : "";
-    const averageTeamOverall = (ids: string[]) => {
-      const ratings = ids.map(player).filter((item): item is Player => Boolean(item)).map(displayedOverall).filter((value): value is number => value !== null);
-      return ratings.length ? Math.round(ratings.reduce((sum, value) => sum + value, 0) / ratings.length * 10) / 10 : null;
+    const ratedActiveOveralls = active.map(displayedOverall).filter((value): value is number => value !== null);
+    const fallbackOverall = ratedActiveOveralls.length ? ratedActiveOveralls.reduce((sum, value) => sum + value, 0) / ratedActiveOveralls.length : FALLBACK_BALANCE_VECTOR[0];
+    const teamOverall = (ids: string[]) => {
+      const ratings = ids.map(player).filter((item): item is Player => Boolean(item)).map((item) => displayedOverall(item) ?? fallbackOverall);
+      const total = Math.round(ratings.reduce((sum, value) => sum + value, 0) * 10) / 10;
+      return { count: ratings.length, total, average: ratings.length ? Math.round(total / ratings.length * 10) / 10 : null };
     };
-    const team1Average = saved ? averageTeamOverall(saved.team1.ids) : null;
-    const team2Average = saved ? averageTeamOverall(saved.team2.ids) : null;
+    const team1StarterIds = saved ? saved.team1.ids.filter((id) => !(saved.team1.substitutes || []).includes(id)) : [];
+    const team2StarterIds = saved ? saved.team2.ids.filter((id) => !(saved.team2.substitutes || []).includes(id)) : [];
+    const team1Overall = teamOverall(team1StarterIds);
+    const team2Overall = teamOverall(team2StarterIds);
+    const team1Average = team1Overall.average;
+    const team2Average = team2Overall.average;
     const averageGap = team1Average !== null && team2Average !== null ? Math.round(Math.abs(team1Average - team2Average) * 10) / 10 : null;
-    const balanceReady = unassigned.length === 0 && averageGap !== null && team1Average !== null && team2Average !== null;
-    const teamsUnbalanced = balanceReady && averageGap >= 2;
-    const strongerTeamName = saved && team1Average !== null && team2Average !== null
-      ? team1Average >= team2Average ? saved.team1.name || "Team 1" : saved.team2.name || "Team 2"
+    const playerCountGap = Math.abs(team1Overall.count - team2Overall.count);
+    const combinedOverallGap = Math.round(Math.abs(team1Overall.total - team2Overall.total) * 10) / 10;
+    const balanceReady = unassigned.length === 0 && averageGap !== null && team1Overall.count > 0 && team2Overall.count > 0;
+    const teamsUnbalanced = balanceReady && combinedOverallGap >= COMBINED_OVR_BALANCE_LIMIT;
+    const strongerTeamName = saved && balanceReady
+      ? team1Overall.total >= team2Overall.total ? saved.team1.name || "Team 1" : saved.team2.name || "Team 2"
       : "";
-
+    const weakerTeamName = saved && balanceReady
+      ? team1Overall.total >= team2Overall.total ? saved.team2.name || "Team 2" : saved.team1.name || "Team 1"
+      : "";
     const captainsReady = () => {
       if (!captain1 || !captain2) { window.alert("Choose both captains first."); return false; }
       if (captain1 === captain2) { window.alert("Choose two different captains."); return false; }
@@ -1803,7 +1815,7 @@ export default function SquadSheet() {
       return <div className="card balanced-team-card">
         {unlocked ? <div className="team-identity-fields"><div><label htmlFor={`team-name-${number}`}>Team {number} name</label><input id={`team-name-${number}`} value={team.name} onChange={(event) => updateTeam(key, { name: event.target.value })} /></div><div><div className="team-flag-heading"><label htmlFor={`team-flag-${number}`}>Team flag</label><div className="team-action-menu"><button type="button" className="b line sm team-menu-trigger" aria-label={`Open ${team.name || `Team ${number}`} actions`} aria-expanded={openTeamMenu === key} onClick={() => setOpenTeamMenu((current) => current === key ? "" : key)}>⋯</button>{openTeamMenu === key && <div className="team-action-menu__list"><button type="button" onClick={() => chooseTeamAction(key, "captain")}>Change captain</button><button type="button" disabled={Boolean(state.match.startedAt)} onClick={() => chooseTeamAction(key, "bench")}>Starter / bench</button><button type="button" disabled={unassigned.length > 0 || Boolean(state.match.startedAt)} onClick={() => chooseTeamAction(key, "move")}>Move to {saved[other].name || `Team ${number === 1 ? 2 : 1}`}</button></div>}</div></div><div className="team-flag-field"><TeamMark name={team.name} flag={team.flag} className="team-flag-preview" /><div className="team-flag-actions"><label className="b line sm photo-button">{teamFlagUploading === key ? "Uploading…" : team.flag ? "Replace PNG" : "Upload PNG"}<input id={`team-flag-${number}`} type="file" accept="image/png,.png" disabled={Boolean(teamFlagUploading)} onChange={(event) => { const file = event.target.files?.[0]; void changeTeamFlag(key, file); event.target.value = ""; }} /></label>{team.flag && <button type="button" className="b line sm" disabled={Boolean(teamFlagUploading)} onClick={() => updateTeam(key, { flag: "" })}>Remove</button>}</div></div></div></div> : <h3 className="public-team-name"><TeamMark name={team.name} flag={team.flag} className="team-name-flag" />{team.name}</h3>}
         {activeAction && <div className="team-action-prompt"><span>{actionPrompt}, then click their name.</span><button type="button" onClick={() => setTeamRosterAction(null)}>Cancel</button></div>}
-        <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{average !== null ? ` · Avg ${average} OVR` : ""}</p>
+        <p className="note">{roster.length} player{roster.length === 1 ? "" : "s"}{substitutes.length ? ` · ${starterIds.length} starters` : ""}{average !== null ? ` · ${substitutes.length ? "Starting avg" : "Avg"} ${average} OVR` : ""}</p>
         <p className="formation-label">Formation: {formationLabel(Object.fromEntries(Object.entries(team.positions).filter(([id]) => starterIds.includes(id))))}{substitutes.length ? ` · ${substitutes.length} substitute${substitutes.length === 1 ? "" : "s"}` : ""}</p>
         <div className="roster-list">{roster.map((item) => { const isSubstitute = substitutes.includes(item.id); return RosterRow({ item, captain: team.captain === item.id, lineupPosition: team.positions[item.id] || defaultPosition(item), flagOverride: team.flag || null, flagLabel: team.name, rowKey: item.id, selecting: Boolean(activeAction), onPlayerClick: activeAction ? () => applyTeamAction(key, item.id) : undefined, children: unlocked ? <><span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span><select className="lineup-position-select" aria-label={`${item.name} lineup position`} value={team.positions[item.id] || defaultPosition(item)} onChange={(event) => updateLineupPosition(key, item.id, event.target.value)}>{POSITIONS.map((position) => <option key={position}>{position}</option>)}</select></> : <span className={`lineup-role${isSubstitute ? " is-sub" : ""}`}>{isSubstitute ? "SUB" : "XI"}</span> }); })}</div>
       </div>;
@@ -1811,13 +1823,21 @@ export default function SquadSheet() {
 
     return <>
       {unlocked ? <div className="sec"><h2>Set up two teams</h2><p className="note">Choose two captains, then balance every active player by base OVR only. Positions are optimized separately after both rosters are fixed.</p>
+        {active.length % 2 === 1 && active.length > 1 && <p className="note">Auto-pick keeps the extra player on the field and gives stronger players to the smaller team to balance combined OVR. Benching stays optional and can be done later by the admin.</p>}
         <div className="row2 captain-selects"><div><label htmlFor="captain-one">Team 1 captain</label><select id="captain-one" value={captain1} disabled={Boolean(saved)} onChange={(event) => setPickCaptain(event.target.value)}><option value="">Choose captain…</option>{sortPlayers(active).filter((item) => item.id !== captain2).map((item) => <option value={item.id} key={item.id}>{item.name} ({ratingLabel(item)})</option>)}</select></div><div><label htmlFor="captain-two">Team 2 captain</label><select id="captain-two" value={captain2} disabled={Boolean(saved)} onChange={(event) => setPickCaptainTwo(event.target.value)}><option value="">Choose captain…</option>{sortPlayers(active).filter((item) => item.id !== captain1).map((item) => <option value={item.id} key={item.id}>{item.name} ({ratingLabel(item)})</option>)}</select></div></div>
         {!saved ? <div className="button-row"><button className="b pri" disabled={active.length < 2} onClick={() => generateTeams(false)}>Auto-pick balanced teams</button><button className="b line" disabled={active.length < 2} onClick={startManualPick}>Pick manually</button></div> : <div className="button-row"><button className="b" onClick={() => generateTeams(true)}>Shuffle again</button><button className="b line" onClick={deleteTeams}>Delete generated teams</button></div>}
         {active.some((item) => displayedOverall(item) === null) && <p className="note">Unrated players use the squad average. Add ratings for a more accurate automatic split.</p>}
       </div> : !saved && <div className="sec"><h2>No teams yet</h2><p className="empty">An admin can log in and create the next two teams.</p></div>}
       {saved && <div className="sec top-rule"><h2>{unlocked ? "Edit teams and positions" : "Teams"}</h2><p className="note">{unlocked ? "After OVR-balanced teams are chosen, positions maximize lineup OVR while covering goalkeeper, defence and attack. Captains stay on their selected side." : "View the current squads, formations and player cards."}</p>
         {unassigned.length > 0 && <div className="draft-arena" aria-live="polite"><div className={`draft-captain draft-captain-left${draftTeam === "team1" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team1.captain)?.name || saved.team1.name}</strong><small>{draftTeam === "team1" ? "Picking now" : "Waiting"}</small></div><div className="draft-ball">⚽</div><div className={`draft-captain draft-captain-right${draftTeam === "team2" ? " is-turn" : ""}`}><span className="draft-hand">✋</span><strong>{player(saved.team2.captain)?.name || saved.team2.name}</strong><small>{draftTeam === "team2" ? "Picking now" : "Waiting"}</small></div><p><strong>{draftCaptain?.name || saved[draftTeam].name}&apos;s turn</strong> · choose one player</p></div>}
-        {balanceReady && <div className={`team-balance-status${teamsUnbalanced ? " is-warning" : " is-balanced"}`} role={teamsUnbalanced ? "alert" : "status"}><strong>{teamsUnbalanced ? "Teams are not balanced" : "Teams are balanced"}</strong><span>{saved.team1.name || "Team 1"}: {team1Average?.toFixed(1)} OVR · {saved.team2.name || "Team 2"}: {team2Average?.toFixed(1)} OVR · Difference: {averageGap?.toFixed(1)} OVR.</span>{teamsUnbalanced && <span>{strongerTeamName} is stronger. Shuffle again or move players between the teams.</span>}<details className="team-balance-info"><summary aria-label="Show team balance rule"><span aria-hidden="true">ⓘ</span> Balance rule</summary><p>Balance is based on each team&apos;s average OVR. Keep the difference below 2.0 for a balanced match.</p></details></div>}
+        {balanceReady && <div className={`team-balance-status${teamsUnbalanced ? " is-warning" : " is-balanced"}`} role={teamsUnbalanced ? "alert" : "status"}>
+          <strong>{teamsUnbalanced ? "Teams are not balanced" : "Teams are balanced"}</strong>
+          <span>{saved.team1.name || "Team 1"}: {team1Overall.count} starters · {team1Overall.total.toFixed(1)} combined OVR · {team1Average?.toFixed(1)} average OVR.</span>
+          <span>{saved.team2.name || "Team 2"}: {team2Overall.count} starters · {team2Overall.total.toFixed(1)} combined OVR · {team2Average?.toFixed(1)} average OVR.</span>
+          <span>Difference: {playerCountGap} player{playerCountGap === 1 ? "" : "s"} · {combinedOverallGap.toFixed(1)} combined OVR · {averageGap?.toFixed(1)} average OVR.</span>
+          {teamsUnbalanced && <span>{strongerTeamName} has {combinedOverallGap.toFixed(1)} more combined OVR. Move stronger players to {weakerTeamName} or swap players until the totals are closer.{playerCountGap > 0 ? " The smaller team needs higher-OVR players to compensate for having fewer players." : ""}</span>}
+          <details className="team-balance-info"><summary aria-label="Show team balance rule"><span aria-hidden="true">ⓘ</span> Balance rule</summary><p>Balance is based on the starting lineups&apos; combined OVR. With an odd number of players, the smaller team receives higher-rated players to compensate. A combined OVR difference below {COMBINED_OVR_BALANCE_LIMIT.toFixed(1)} is balanced.</p></details>
+        </div>}
         <div className="row2 balanced-team-grid">{teamCard("team1")}{teamCard("team2")}</div>
         {FormationBoard(true)}
         {unassigned.length > 0 && <div className="unassigned-card"><h2>Players waiting to be picked · {unassigned.length}</h2><p className="note">Captains take turns. Only the captain whose hand is highlighted can make the next pick.</p><div className="roster-list">{unassigned.map((item) => RosterRow({ item, rowKey: item.id, children: unlocked ? <button className="b sm pri" onClick={() => assignPlayer(item.id, draftTeam)}>Pick for {draftCaptain?.name || saved[draftTeam].name}</button> : undefined }))}</div></div>}
