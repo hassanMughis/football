@@ -114,6 +114,7 @@ type MatchHistoryEntry = {
   motm: string;
 };
 type PaymentParticipant = { id: string; name: string; paidAt?: string };
+type PaymentSettings = { nayapayId: string };
 type MatchPayment = {
   matchId: string;
   createdAt: string;
@@ -138,6 +139,7 @@ type AppState = {
   match: Match;
   history: MatchHistoryEntry[];
   payments: MatchPayment[];
+  paymentSettings: PaymentSettings;
   seeded: boolean;
   savedAt?: number;
 };
@@ -164,6 +166,12 @@ const HALF_TIME_SECONDS = 45 * 60;
 const PAYMENT_OVERDUE_MS = 3 * 24 * 60 * 60 * 1000;
 const PAYMENT_CURRENCY = "PKR";
 const paymentAmount = (value: number) => `${PAYMENT_CURRENCY} ${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.max(0, value))}`;
+const paymentParticipantPaisa = (payment: MatchPayment, participantIndex: number) => {
+  if (!payment.participants.length) return 0;
+  const totalPaisa = Math.max(0, Math.round(payment.totalExpense * 100));
+  return Math.floor(totalPaisa / payment.participants.length) + (participantIndex < totalPaisa % payment.participants.length ? 1 : 0);
+};
+const paymentParticipantAmount = (payment: MatchPayment, participantIndex: number) => paymentParticipantPaisa(payment, participantIndex) / 100;
 const paymentDueAt = (payment: MatchPayment) => Date.parse(payment.matchDate) + PAYMENT_OVERDUE_MS;
 const paymentIsOverdue = (payment: MatchPayment, participant: PaymentParticipant, now: number) => payment.totalExpense > 0 && !participant.paidAt && Number.isFinite(paymentDueAt(payment)) && now >= paymentDueAt(payment);
 const paymentParticipants = (ids: string[], players: Player[]) => {
@@ -267,6 +275,7 @@ const initialState = (): AppState => ({
   match: newMatch(),
   history: [],
   payments: [],
+  paymentSettings: { nayapayId: "" },
   seeded: true,
 });
 
@@ -281,6 +290,7 @@ const sharedStateFingerprint = (value: AppState) => JSON.stringify({
   match: value.match,
   history: value.history,
   payments: value.payments,
+  paymentSettings: value.paymentSettings,
   seeded: value.seeded,
 });
 
@@ -461,6 +471,9 @@ const restoreState = (value: unknown): AppState => {
     match: normalizedMatch,
     history: Array.isArray(parsed.history) ? parsed.history.slice(0, 100) : [],
     payments,
+    paymentSettings: {
+      nayapayId: typeof parsed.paymentSettings?.nayapayId === "string" ? parsed.paymentSettings.nayapayId.trim().slice(0, 100) : "",
+    },
     syncVersion: Number(parsed.syncVersion) || undefined,
     savedAt: Number(parsed.savedAt) || undefined,
   };
@@ -1062,6 +1075,8 @@ export default function SquadSheet() {
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [paymentNow, setPaymentNow] = useState(() => Date.now());
   const [showCurrentPaymentForm, setShowCurrentPaymentForm] = useState(false);
+  const [nayapayRequest, setNayapayRequest] = useState<{ matchId: string; participantId: string } | null>(null);
+  const [nayapayCopied, setNayapayCopied] = useState(false);
   const [openHistoryId, setOpenHistoryId] = useState("");
   const [historyDetailTab, setHistoryDetailTab] = useState<HistoryDetailTab>("timeline");
   const [openRosterCardId, setOpenRosterCardId] = useState("");
@@ -2331,21 +2346,48 @@ export default function SquadSheet() {
     const records = [...state.payments].sort((a, b) => Date.parse(b.matchDate) - Date.parse(a.matchDate));
     const recordShare = (payment: MatchPayment) => payment.participants.length ? payment.totalExpense / payment.participants.length : 0;
     const totalExpenses = records.reduce((sum, payment) => sum + payment.totalExpense, 0);
-    const totalPaid = records.reduce((sum, payment) => sum + recordShare(payment) * payment.participants.filter((participant) => participant.paidAt).length, 0);
+    const totalPaid = records.reduce((sum, payment) => sum + payment.participants.reduce((paymentSum, participant, participantIndex) => paymentSum + (participant.paidAt ? paymentParticipantAmount(payment, participantIndex) : 0), 0), 0);
     const totalOutstanding = Math.max(0, totalExpenses - totalPaid);
     const overdueByPlayer = new Map<string, { name: string; amount: number; matches: number }>();
     for (const payment of records) {
-      const share = recordShare(payment);
-      for (const participant of payment.participants) {
+      for (const [participantIndex, participant] of payment.participants.entries()) {
         if (!paymentIsOverdue(payment, participant, paymentNow)) continue;
         const existing = overdueByPlayer.get(participant.id) || { name: participant.name, amount: 0, matches: 0 };
-        overdueByPlayer.set(participant.id, { name: participant.name, amount: existing.amount + share, matches: existing.matches + 1 });
+        overdueByPlayer.set(participant.id, { name: participant.name, amount: existing.amount + paymentParticipantAmount(payment, participantIndex), matches: existing.matches + 1 });
       }
     }
     const overduePlayers = [...overdueByPlayer.entries()].sort(([, a], [, b]) => b.amount - a.amount || a.name.localeCompare(b.name));
+    const requestedPayment = nayapayRequest ? records.find((payment) => payment.matchId === nayapayRequest.matchId) : undefined;
+    const requestedParticipantIndex = requestedPayment && nayapayRequest ? requestedPayment.participants.findIndex((participant) => participant.id === nayapayRequest.participantId) : -1;
+    const requestedParticipant = requestedParticipantIndex >= 0 ? requestedPayment?.participants[requestedParticipantIndex] : undefined;
+    const requestedAmount = requestedPayment && requestedParticipantIndex >= 0 ? paymentParticipantAmount(requestedPayment, requestedParticipantIndex) : 0;
+    const paymentReference = requestedPayment && requestedParticipant
+      ? `SQS-${requestedPayment.matchId.replace(/[^a-z0-9]/gi, "").slice(-8).toUpperCase()}-${requestedParticipant.id.replace(/[^a-z0-9]/gi, "").slice(-6).toUpperCase()}`
+      : "";
+    const copyNayaPayDetails = async () => {
+      if (!requestedPayment || !requestedParticipant || !state.paymentSettings.nayapayId) return;
+      const details = [
+        `Pay to: ${state.paymentSettings.nayapayId}`,
+        `Amount: ${paymentAmount(requestedAmount)}`,
+        `For: ${requestedParticipant.name}`,
+        `Match: ${requestedPayment.team1Name} vs ${requestedPayment.team2Name}`,
+        `Reference: ${paymentReference}`,
+      ].join("\n");
+      try {
+        await navigator.clipboard.writeText(details);
+        setNayapayCopied(true);
+      } catch {
+        window.prompt("Copy these NayaPay payment details:", details);
+      }
+    };
+    const openNayaPay = () => {
+      const isAppleMobile = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      window.open(isAppleMobile ? "https://apps.apple.com/pk/app/nayapay/id1621286305" : "https://play.google.com/store/apps/details?id=com.nayapay.app", "_blank", "noopener,noreferrer");
+    };
     const paymentCard = (payment: MatchPayment) => {
       const share = recordShare(payment);
       const paidCount = payment.participants.filter((participant) => participant.paidAt).length;
+      const collected = payment.participants.reduce((sum, participant, participantIndex) => sum + (participant.paidAt ? paymentParticipantAmount(payment, participantIndex) : 0), 0);
       const unpaidCount = payment.participants.length - paidCount;
       const overdueCount = payment.participants.filter((participant) => paymentIsOverdue(payment, participant, paymentNow)).length;
       const dueAt = paymentDueAt(payment);
@@ -2358,7 +2400,7 @@ export default function SquadSheet() {
           <div><small>Total expense</small><strong>{paymentAmount(payment.totalExpense)}</strong></div>
           <div><small>Players</small><strong>{payment.participants.length}</strong></div>
           <div><small>Each player</small><strong>{payment.totalExpense > 0 ? paymentAmount(share) : "Not set"}</strong></div>
-          <div><small>Collected</small><strong>{paymentAmount(share * paidCount)}</strong></div>
+          <div><small>Collected</small><strong>{paymentAmount(collected)}</strong></div>
         </div>
         {unlocked && <details className="payment-manage">
           <summary>Manage payment</summary>
@@ -2373,17 +2415,21 @@ export default function SquadSheet() {
             <div className="payment-manage-actions">{payment.totalExpense > 0 && <><button type="button" className="b line sm" onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map((participant) => ({ ...participant, paidAt: participant.paidAt || new Date().toISOString() })) }))}>Mark everyone paid</button><button type="button" className="b line sm" onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map(({ paidAt: _paidAt, ...participant }) => participant) }))}>Mark everyone unpaid</button></>}<button type="button" className="b line danger sm" onClick={() => deletePayment(payment)}>Delete payment</button></div>
           </div>
         </details>}
-        <div className="payment-player-list">{payment.participants.map((participant) => {
+        <div className="payment-player-list">{payment.participants.map((participant, participantIndex) => {
           const overdue = paymentIsOverdue(payment, participant, paymentNow);
           const previousOverdue = records.filter((item) => item.matchId !== payment.matchId).reduce((sum, item) => {
-            const savedParticipant = item.participants.find((candidate) => candidate.id === participant.id);
-            return sum + (savedParticipant && paymentIsOverdue(item, savedParticipant, paymentNow) ? recordShare(item) : 0);
+            const savedParticipantIndex = item.participants.findIndex((candidate) => candidate.id === participant.id);
+            const savedParticipant = savedParticipantIndex >= 0 ? item.participants[savedParticipantIndex] : undefined;
+            return sum + (savedParticipant && paymentIsOverdue(item, savedParticipant, paymentNow) ? paymentParticipantAmount(item, savedParticipantIndex) : 0);
           }, 0);
           return <div className={`payment-player${overdue || previousOverdue > 0 ? " is-overdue" : participant.paidAt ? " is-paid" : " is-unpaid"}`} key={participant.id}>
             <span className="payment-avatar">{initials(participant.name)}</span>
             <div><strong>{participant.name}</strong><small>{participant.paidAt ? `Paid ${new Date(participant.paidAt).toLocaleString()}` : overdue ? "Payment overdue" : payment.totalExpense > 0 ? "Payment pending" : "Waiting for expense"}{isCurrent && previousOverdue > 0 ? ` · Previous overdue: ${paymentAmount(previousOverdue)}` : ""}</small></div>
-            <b>{payment.totalExpense > 0 ? paymentAmount(share) : "—"}</b>
-            {unlocked && payment.totalExpense > 0 && <button type="button" className={`b sm ${participant.paidAt ? "line" : "pri"}`} onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map((item) => item.id === participant.id ? item.paidAt ? { id: item.id, name: item.name } : { ...item, paidAt: new Date().toISOString() } : item) }))}>{participant.paidAt ? "Mark unpaid" : "Mark paid"}</button>}
+            <b>{payment.totalExpense > 0 ? paymentAmount(paymentParticipantAmount(payment, participantIndex)) : "—"}</b>
+            <span className="payment-player-actions">
+              {!participant.paidAt && payment.totalExpense > 0 && state.paymentSettings.nayapayId && <button type="button" className="b line sm payment-pay-button" onClick={() => { setNayapayCopied(false); setNayapayRequest({ matchId: payment.matchId, participantId: participant.id }); }}>Pay with NayaPay</button>}
+              {unlocked && payment.totalExpense > 0 && <button type="button" className={`b sm ${participant.paidAt ? "line" : "pri"}`} onClick={() => updatePayment(payment.matchId, (current) => ({ ...current, participants: current.participants.map((item) => item.id === participant.id ? item.paidAt ? { id: item.id, name: item.name } : { ...item, paidAt: new Date().toISOString() } : item) }))}>{participant.paidAt ? "Mark unpaid" : "Mark paid"}</button>}
+            </span>
           </div>;
         })}</div>
       </article>;
@@ -2391,6 +2437,15 @@ export default function SquadSheet() {
 
     return <>
       <div className="sec payment-intro"><span className="payment-kicker">Participation fees</span><h1>Match payments</h1><p>Expenses are split equally between everyone listed for that match. Payment is manual for now, and unpaid players are still allowed in future matches.</p></div>
+      {unlocked && <details className="sec payment-nayapay-settings">
+        <summary><span><strong>NayaPay payment setup</strong><small>{state.paymentSettings.nayapayId ? "Ready for players to use" : "Add the account that receives match fees"}</small></span><b>＋</b></summary>
+        <div className="payment-nayapay-settings-body">
+          <label htmlFor="nayapay-id">Receiving NayaPay ID</label>
+          <div className="payment-nayapay-settings-row"><input id="nayapay-id" value={state.paymentSettings.nayapayId} maxLength={100} autoComplete="off" placeholder="your NayaPay ID" onChange={(event) => setState((current) => ({ ...current, paymentSettings: { nayapayId: event.target.value.slice(0, 100) } }))} />{state.paymentSettings.nayapayId && <button type="button" className="b line sm" onClick={() => setState((current) => ({ ...current, paymentSettings: { nayapayId: "" } }))}>Remove</button>}</div>
+          <p className="note">This ID will be visible to players so they can send the fee. Never enter a PIN, OTP, password, card number or secret key here.</p>
+        </div>
+      </details>}
+      {state.paymentSettings.nayapayId && <div className="sec payment-nayapay-ready"><span aria-hidden="true">N</span><div><strong>Pay through NayaPay</strong><small>Choose your name below to get the exact amount and payment details.</small></div></div>}
       <div className="payment-summary-grid">
         <article><span>Total expenses</span><strong>{paymentAmount(totalExpenses)}</strong><small>Across {records.filter((payment) => payment.totalExpense > 0).length} configured match{records.filter((payment) => payment.totalExpense > 0).length === 1 ? "" : "es"}</small></article>
         <article><span>Collected</span><strong>{paymentAmount(totalPaid)}</strong><small>Marked paid manually</small></article>
@@ -2412,6 +2467,24 @@ export default function SquadSheet() {
       </details>}
       {overduePlayers.length > 0 && <div className="sec payment-overdue-panel"><h2>Overdue payments</h2><p className="note">These fees have remained unpaid for at least three days after their match. Players stay eligible for future matches.</p><div>{overduePlayers.map(([id, debt]) => <div key={id}><span><strong>{debt.name}</strong><small>{debt.matches} overdue match{debt.matches === 1 ? "" : "es"}</small></span><b>{paymentAmount(debt.amount)}</b></div>)}</div></div>}
       <div className="payment-records">{records.length ? records.map(paymentCard) : <div className="sec"><div className="empty">Payment records appear here when an admin hosts a match.</div></div>}</div>
+      {requestedPayment && requestedParticipant && state.paymentSettings.nayapayId && <div className="admin-login-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setNayapayRequest(null); }}><section className="access-card payment-request-card" role="dialog" aria-modal="true" aria-labelledby="nayapay-payment-title">
+        <button className="admin-login-close" type="button" onClick={() => setNayapayRequest(null)} aria-label="Close payment details">×</button>
+        <p className="access-kicker">NAYAPAY PAYMENT</p>
+        <h1 id="nayapay-payment-title">Pay a player&apos;s match fee</h1>
+        <p className="note">Choose who you are paying for, then copy the details before opening NayaPay.</p>
+        <label htmlFor="nayapay-player">Paying for</label>
+        <select id="nayapay-player" value={requestedParticipant.id} onChange={(event) => { setNayapayCopied(false); setNayapayRequest({ matchId: requestedPayment.matchId, participantId: event.target.value }); }}>
+          {requestedPayment.participants.filter((participant) => !participant.paidAt).map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}
+        </select>
+        <dl className="payment-request-details">
+          <div><dt>Send to</dt><dd>{state.paymentSettings.nayapayId}</dd></div>
+          <div><dt>Exact amount</dt><dd>{paymentAmount(requestedAmount)}</dd></div>
+          <div><dt>Reference</dt><dd>{paymentReference}</dd></div>
+          <div><dt>Match</dt><dd>{requestedPayment.team1Name} vs {requestedPayment.team2Name}</dd></div>
+        </dl>
+        <div className="payment-request-actions"><button type="button" className="b line" onClick={() => void copyNayaPayDetails()}>{nayapayCopied ? "Details copied" : "Copy payment details"}</button><button type="button" className="b pri" onClick={openNayaPay}>Open NayaPay</button></div>
+        <p className="payment-request-warning">NayaPay cannot report the transfer back to this site automatically. After paying, ask the admin to verify it and mark you paid.</p>
+      </section></div>}
     </>;
   }
 
